@@ -1,22 +1,13 @@
 // 로그인 확인용 목업 페이지
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useSelector, useDispatch } from 'react-redux';
-import { logout } from '../../store/slices/authSlice';
 import {
   Box,
-  AppBar,
-  Toolbar,
   Typography,
   Button,
   Card,
   CardContent,
   LinearProgress,
-  IconButton,
-  BottomNavigation,
-  BottomNavigationAction,
-  Chip,
   Stack,
 } from '@mui/material';
 import {
@@ -25,11 +16,8 @@ import {
   SkipNext,
   Replay,
   Mic,
-  MenuBook,
-  Chat,
-  BarChart,
-  Logout,
 } from '@mui/icons-material';
+import StudentLayout from '../../components/common/StudentLayout';
 
 // 샘플 문장 데이터
 const SAMPLE_SENTENCES = [
@@ -41,14 +29,9 @@ const SAMPLE_SENTENCES = [
 ];
 
 export default function PracticePage() {
-  const navigate = useNavigate();
-  const dispatch = useDispatch();
-  const { user } = useSelector((state) => state.auth);
-  
   const [currentIndex, setCurrentIndex] = useState(0);
   const [speakingTime, setSpeakingTime] = useState(0);
   const [totalTime, setTotalTime] = useState(0);
-  const [navValue, setNavValue] = useState(0);
 
   const currentSentence = SAMPLE_SENTENCES[currentIndex];
   const progress = Math.round((speakingTime / (totalTime || 1)) * 100);
@@ -67,54 +50,14 @@ export default function PracticePage() {
     }
   };
 
-  const handleLogout = () => {
-    dispatch(logout());
-    navigate('/login');
-  };
-
-  const handleNavigation = (event, newValue) => {
-    setNavValue(newValue);
-    const routes = ['/practice', '/chat', '/stats'];
-    navigate(routes[newValue]);
-  };
-
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: '#f5f5f5' }}>
-      {/* 헤더 */}
-      <AppBar position="static" sx={{ bgcolor: 'white', color: 'text.primary' }} elevation={1}>
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 0, mr: 4, color: 'primary.main', fontWeight: 700 }}>
-            🎤 SpeakTracker
-          </Typography>
-          <Chip 
-            label={`오늘 학습: ${Math.floor(totalTime / 60)}분 ${totalTime % 60}초`}
-            color="primary"
-            variant="outlined"
-            sx={{ mr: 'auto' }}
-          />
-          <Typography variant="body2" sx={{ mr: 2 }}>
-            {user?.name || user?.email}
-          </Typography>
-          <Button 
-            onClick={handleLogout} 
-            startIcon={<Logout />}
-            variant="outlined"
-            size="small"
-          >
-            로그아웃
-          </Button>
-        </Toolbar>
-      </AppBar>
-
-      {/* 메인 컨텐츠 */}
+    <StudentLayout todayTime={totalTime}>
       <Box 
         sx={{ 
           flex: 1, 
           display: 'flex', 
           alignItems: 'center', 
           justifyContent: 'center',
-          p: 3,
-          pb: 10, // 하단 네비게이션 공간
         }}
       >
         <Card sx={{ maxWidth: 600, width: '100%' }} elevation={3}>
@@ -210,25 +153,6 @@ export default function PracticePage() {
           </CardContent>
         </Card>
       </Box>
-
-      {/* 하단 네비게이션 */}
-      <BottomNavigation
-        value={navValue}
-        onChange={handleNavigation}
-        showLabels
-        sx={{
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          borderTop: 1,
-          borderColor: 'divider',
-        }}
-      >
-        <BottomNavigationAction label="연습" icon={<MenuBook />} />
-        <BottomNavigationAction label="대화" icon={<Chat />} />
-        <BottomNavigationAction label="통계" icon={<BarChart />} />
-      </BottomNavigation>
-    </Box>
+    </StudentLayout>
   );
 }

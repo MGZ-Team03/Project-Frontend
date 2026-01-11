@@ -5,25 +5,19 @@ import { useDispatch } from 'react-redux';
 import { store } from './store';
 import { checkAuth } from './store/slices/authSlice';
 
-// Pages
+// Pages - Student
 import LoginPage from './pages/LoginPage';
 import SignUpPage from './pages/SignUpPage';
 import PracticePage from './pages/student/PracticePage';
-// TODO: 아래 페이지들은 추후 구현
-// import ChatPage from './pages/student/ChatPage';
-// import StatsPage from './pages/student/StatsPage';
-// import DashboardPage from './pages/tutor/DashboardPage';
+import ChatPage from './pages/student/ChatPage';
+import StatsPage from './pages/student/StatsPage';
+
+// Pages - Tutor
+import DashboardPage from './pages/tutor/DashboardPage';
+import StudentDetailPage from './pages/tutor/StudentDetailPage';
 
 // Components
 import ProtectedRoute from './components/common/ProtectedRoute';
-
-// 임시 플레이스홀더 컴포넌트
-const PlaceholderPage = ({ title }) => (
-  <div style={{ padding: '20px', textAlign: 'center' }}>
-    <h1>{title}</h1>
-    <p>이 페이지는 추후 구현 예정입니다.</p>
-  </div>
-);
 
 function AppContent() {
   const dispatch = useDispatch();
@@ -45,19 +39,35 @@ function AppContent() {
       } />
       <Route path="/chat" element={
         <ProtectedRoute allowedRoles={['student']}>
-          <PlaceholderPage title="💬 AI 대화" />
+          <ChatPage />
         </ProtectedRoute>
       } />
       <Route path="/stats" element={
         <ProtectedRoute allowedRoles={['student']}>
-          <PlaceholderPage title="📊 학습 통계" />
+          <StatsPage />
         </ProtectedRoute>
       } />
       
       {/* 튜터 페이지 */}
-      <Route path="/tutor" element={
+      <Route path="/tutor" element={<Navigate to="/tutor/dashboard" replace />} />
+      <Route path="/tutor/dashboard" element={
         <ProtectedRoute allowedRoles={['tutor']}>
-          <PlaceholderPage title="👨‍🏫 튜터 대시보드" />
+          <DashboardPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/tutor/students" element={
+        <ProtectedRoute allowedRoles={['tutor']}>
+          <DashboardPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/tutor/students/:email" element={
+        <ProtectedRoute allowedRoles={['tutor']}>
+          <StudentDetailPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/tutor/stats" element={
+        <ProtectedRoute allowedRoles={['tutor']}>
+          <DashboardPage />
         </ProtectedRoute>
       } />
       
