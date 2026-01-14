@@ -33,7 +33,7 @@ export default function LoginPage() {
       if (user.role === USER_ROLES.TUTOR) {
         navigate('/tutor');
       } else {
-        navigate('/practice');
+        navigate('/home');
       }
     }
   }, [isAuthenticated, user, navigate]);

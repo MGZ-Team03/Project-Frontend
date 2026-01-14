@@ -8,6 +8,7 @@ import { checkAuth } from './store/slices/authSlice';
 // Pages - Student
 import LoginPage from './pages/LoginPage';
 import SignUpPage from './pages/SignUpPage';
+import HomePage from './pages/student/HomePage';
 import PracticePage from './pages/student/PracticePage';
 import ChatPage from './pages/student/ChatPage';
 import StatsPage from './pages/student/StatsPage';
@@ -30,8 +31,13 @@ function AppContent() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignUpPage />} />
-      
+
       {/* 학생 페이지 */}
+      <Route path="/home" element={
+        <ProtectedRoute allowedRoles={['student']}>
+          <HomePage />
+        </ProtectedRoute>
+      } />
       <Route path="/practice" element={
         <ProtectedRoute allowedRoles={['student']}>
           <PracticePage />
@@ -47,7 +53,7 @@ function AppContent() {
           <StatsPage />
         </ProtectedRoute>
       } />
-      
+
       {/* 튜터 페이지 */}
       <Route path="/tutor" element={<Navigate to="/tutor/dashboard" replace />} />
       <Route path="/tutor/dashboard" element={
@@ -70,9 +76,9 @@ function AppContent() {
           <DashboardPage />
         </ProtectedRoute>
       } />
-      
+
       {/* 기본 리다이렉트 */}
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/" element={<Navigate to="/home" replace />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
