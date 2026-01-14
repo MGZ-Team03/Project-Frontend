@@ -1,6 +1,5 @@
 import { Box } from '@mui/material';
 import Header from './Header';
-import TutorBottomNav from './TutorBottomNav';
 
 export default function TutorLayout({ children, studentCount = 0 }) {
   return (
@@ -13,13 +12,10 @@ export default function TutorLayout({ children, studentCount = 0 }) {
           display: 'flex', 
           flexDirection: 'column',
           p: 3,
-          pb: 10, // 하단 네비게이션 공간
         }}
       >
         {children}
       </Box>
-
-      <TutorBottomNav />
     </Box>
   );
 }

@@ -1,6 +1,7 @@
-// 로그인 확인용 목업 페이지
+// 문장 연습 페이지 + 튜터 피드백
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSelector } from 'react-redux';
 import {
   Box,
   Typography,
@@ -9,6 +10,11 @@ import {
   CardContent,
   LinearProgress,
   Stack,
+  Chip,
+  Avatar,
+  Paper,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import {
   VolumeUp,
@@ -16,8 +22,11 @@ import {
   SkipNext,
   Replay,
   Mic,
+  Notifications,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import { getFeedbackHistory } from '../../api/tutorFeedback';
 
 // 샘플 문장 데이터
 const SAMPLE_SENTENCES = [
@@ -29,9 +38,50 @@ const SAMPLE_SENTENCES = [
 ];
 
 export default function PracticePage() {
+  const user = useSelector((state) => state.auth.user);
+  const userEmail = user?.email;
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [speakingTime, setSpeakingTime] = useState(0);
   const [totalTime, setTotalTime] = useState(0);
+  const [feedbacks, setFeedbacks] = useState([]);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+
+  // WebSocket 연결
+  const handleWebSocketMessage = (message) => {
+    if (message.type === 'feedback') {
+      setFeedbacks((prev) => [message, ...prev]);
+      setSnackbar({
+        open: true,
+        message: `튜터 피드백: ${message.message}`,
+        severity: 'success',
+      });
+
+      // 브라우저 알림
+      if (Notification.permission === 'granted') {
+        new Notification('튜터 피드백', {
+          body: message.message,
+          icon: '/tutor-icon.png',
+        });
+      }
+    }
+  };
+
+  const { isConnected, error } = useWebSocket(userEmail, handleWebSocketMessage);
+
+  // 피드백 히스토리 불러오기
+  useEffect(() => {
+    if (userEmail) {
+      getFeedbackHistory(userEmail, 10)
+        .then((data) => setFeedbacks(data || []))
+        .catch((err) => console.error('Failed to fetch feedback history:', err));
+    }
+
+    // 알림 권한 요청
+    if (Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, [userEmail]);
 
   const currentSentence = SAMPLE_SENTENCES[currentIndex];
   const progress = Math.round((speakingTime / (totalTime || 1)) * 100);
@@ -56,10 +106,49 @@ export default function PracticePage() {
         sx={{ 
           flex: 1, 
           display: 'flex', 
+          flexDirection: 'column',
           alignItems: 'center', 
           justifyContent: 'center',
+          gap: 2,
+          p: 2,
         }}
       >
+        {/* WebSocket 상태 + 튜터 피드백 알림 */}
+        <Box sx={{ width: '100%', maxWidth: 600 }}>
+          <Stack direction="row" spacing={1} alignItems="center" justifyContent="flex-end" mb={1}>
+            <Chip 
+              icon={<Notifications />}
+              label={isConnected ? '연결됨' : '연결 안됨'}
+              color={isConnected ? 'success' : 'error'}
+              size="small"
+            />
+          </Stack>
+
+          {/* 튜터 피드백 영역 (최근 1개만 표시) */}
+          {feedbacks.length > 0 && (
+            <Card sx={{ mb: 2, bgcolor: '#fff3e0' }} elevation={2}>
+              <CardContent sx={{ py: 1.5, px: 2 }}>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Avatar sx={{ width: 28, height: 28, bgcolor: 'primary.main', fontSize: 16 }}>
+                    👨‍🏫
+                  </Avatar>
+                  <Box flex={1}>
+                    <Typography variant="body2" fontWeight="bold">
+                      튜터 피드백
+                    </Typography>
+                    <Typography variant="body2">
+                      {feedbacks[0].message}
+                    </Typography>
+                    {feedbacks[0].audioUrl && (
+                      <audio controls src={feedbacks[0].audioUrl} style={{ width: '100%', height: 28, marginTop: 4 }} />
+                    )}
+                  </Box>
+                </Stack>
+              </CardContent>
+            </Card>
+          )}
+        </Box>
+
         <Card sx={{ maxWidth: 600, width: '100%' }} elevation={3}>
           <CardContent sx={{ p: 4 }}>
             {/* 문장 표시 */}
@@ -153,6 +242,20 @@ export default function PracticePage() {
           </CardContent>
         </Card>
       </Box>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert 
+          onClose={() => setSnackbar({ ...snackbar, open: false })} 
+          severity={snackbar.severity}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </StudentLayout>
   );
 }

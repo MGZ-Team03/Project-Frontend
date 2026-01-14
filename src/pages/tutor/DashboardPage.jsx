@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import {
   Box,
   Typography,
@@ -14,6 +15,14 @@ import {
   IconButton,
   LinearProgress,
   Tooltip,
+  TextField,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Alert,
+  Snackbar,
 } from '@mui/material';
 import {
   Circle,
@@ -22,8 +31,10 @@ import {
   MenuBook,
   Chat,
   Warning,
+  Send,
 } from '@mui/icons-material';
 import TutorLayout from '../../components/common/TutorLayout';
+import { sendFeedback } from '../../api/tutorFeedback';
 
 // 목업 학생 데이터
 const MOCK_STUDENTS = [
@@ -122,7 +133,7 @@ function getStatusLabel(status) {
   }
 }
 
-function StudentCard({ student, onClick }) {
+function StudentCard({ student, onClick, onFeedbackClick, onQuickFeedback, disabled }) {
   const statusColor = getStatusColor(student.status);
 
   return (
@@ -134,7 +145,7 @@ function StudentCard({ student, onClick }) {
         borderColor: 'error.main',
         '&:hover': { boxShadow: 6 },
       }}
-      onClick={onClick}
+      onClick={() => onClick(student.email)}
     >
       <CardContent>
         <Stack direction="row" alignItems="center" spacing={2}>
@@ -205,12 +216,24 @@ function StudentCard({ student, onClick }) {
           {/* 액션 버튼 */}
           <Stack direction="row" spacing={0.5}>
             <Tooltip title="상세 보기">
-              <IconButton size="small" color="primary">
+              <IconButton 
+                size="small" 
+                color="primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClick(student.email);
+                }}
+              >
                 <Visibility fontSize="small" />
               </IconButton>
             </Tooltip>
             <Tooltip title="피드백 보내기">
-              <IconButton size="small" color="secondary">
+              <IconButton 
+                size="small" 
+                color="secondary"
+                onClick={(e) => onFeedbackClick(student, e)}
+                disabled={disabled}
+              >
                 <Message fontSize="small" />
               </IconButton>
             </Tooltip>
@@ -226,6 +249,31 @@ function StudentCard({ student, onClick }) {
             sx={{ mt: 1, height: 4, borderRadius: 2 }}
           />
         )}
+
+        {/* 빠른 피드백 버튼 */}
+        <Box display="flex" gap={0.5} mt={2} flexWrap="wrap">
+          <Chip
+            label="👍 잘하고 있어요!"
+            size="small"
+            onClick={(e) => onQuickFeedback(student, '발음이 좋아졌어요! 계속 연습하세요.', e)}
+            disabled={disabled}
+            sx={{ cursor: 'pointer' }}
+          />
+          <Chip
+            label="💪 힘내세요!"
+            size="small"
+            onClick={(e) => onQuickFeedback(student, '좀 더 천천히 발음해보세요.', e)}
+            disabled={disabled}
+            sx={{ cursor: 'pointer' }}
+          />
+          <Chip
+            label="🔊 크게 말해요"
+            size="small"
+            onClick={(e) => onQuickFeedback(student, '좀 더 크게 말씀해주세요.', e)}
+            disabled={disabled}
+            sx={{ cursor: 'pointer' }}
+          />
+        </Box>
       </CardContent>
     </Card>
   );
@@ -233,7 +281,14 @@ function StudentCard({ student, onClick }) {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const tutorEmail = useSelector(state => state.auth.user?.email);
+  
   const [students] = useState(MOCK_STUDENTS);
+  const [feedbackDialog, setFeedbackDialog] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [notification, setNotification] = useState(null);
+  const [sending, setSending] = useState(false);
 
   const activeStudents = students.filter(s => s.status !== 'inactive');
   const speakingStudents = students.filter(s => s.status === 'speaking');
@@ -241,6 +296,78 @@ export default function DashboardPage() {
 
   const handleStudentClick = (email) => {
     navigate(`/tutor/students/${email}`);
+  };
+
+  // 피드백 다이얼로그 열기
+  const openFeedbackDialog = (student, event) => {
+    event?.stopPropagation();
+    setSelectedStudent(student);
+    setFeedbackText('');
+    setFeedbackDialog(true);
+  };
+
+  // 피드백 전송
+  const handleSendFeedback = async () => {
+    if (!feedbackText.trim()) {
+      setNotification({ message: '피드백 메시지를 입력해주세요.', severity: 'warning' });
+      return;
+    }
+
+    setSending(true);
+    try {
+      const result = await sendFeedback({
+        tutor_email: tutorEmail,
+        student_email: selectedStudent.email,
+        message: feedbackText,
+        message_type: 'text',
+        session_id: 'default'
+      });
+
+      console.log('피드백 전송 결과:', result);
+
+      setNotification({
+        message: `피드백 전송 성공! ${result.websocket_sent ? '(실시간 전달됨)' : '(오프라인)'}`,
+        severity: 'success',
+      });
+
+      setFeedbackDialog(false);
+      setFeedbackText('');
+    } catch (error) {
+      console.error('피드백 전송 실패:', error);
+      setNotification({
+        message: '피드백 전송에 실패했습니다.',
+        severity: 'error',
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // 빠른 피드백 전송 (미리 정의된 메시지)
+  const sendQuickFeedback = async (student, message, event) => {
+    event?.stopPropagation();
+    setSending(true);
+    try {
+      const result = await sendFeedback({
+        tutor_email: tutorEmail,
+        student_email: student.email,
+        message: message,
+        message_type: 'text',
+        session_id: 'default'
+      });
+
+      setNotification({
+        message: `빠른 피드백 전송 완료! ${result.websocket_sent ? '(실시간)' : '(오프라인)'}`,
+        severity: 'success',
+      });
+    } catch (error) {
+      setNotification({
+        message: '피드백 전송 실패',
+        severity: 'error',
+      });
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -312,10 +439,69 @@ export default function DashboardPage() {
             <StudentCard
               key={student.email}
               student={student}
-              onClick={() => handleStudentClick(student.email)}
+              onClick={handleStudentClick}
+              onFeedbackClick={openFeedbackDialog}
+              onQuickFeedback={sendQuickFeedback}
+              disabled={sending}
             />
           ))}
         </Stack>
+
+        {/* 피드백 다이얼로그 */}
+        <Dialog
+          open={feedbackDialog}
+          onClose={() => !sending && setFeedbackDialog(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>
+            📨 피드백 전송: {selectedStudent?.name}
+          </DialogTitle>
+          <DialogContent>
+            <TextField
+              autoFocus
+              fullWidth
+              multiline
+              rows={4}
+              placeholder="학생에게 전달할 피드백을 입력하세요..."
+              value={feedbackText}
+              onChange={(e) => setFeedbackText(e.target.value)}
+              disabled={sending}
+              sx={{ mt: 2 }}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              학생: {selectedStudent?.email}
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setFeedbackDialog(false)} disabled={sending}>
+              취소
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSendFeedback}
+              disabled={sending || !feedbackText.trim()}
+              startIcon={<Send />}
+            >
+              {sending ? '전송 중...' : '전송'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* 알림 스낵바 */}
+        <Snackbar
+          open={!!notification}
+          autoHideDuration={4000}
+          onClose={() => setNotification(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert 
+            onClose={() => setNotification(null)} 
+            severity={notification?.severity || 'info'}
+          >
+            {notification?.message}
+          </Alert>
+        </Snackbar>
       </Box>
     </TutorLayout>
   );
