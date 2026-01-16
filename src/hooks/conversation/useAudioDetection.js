@@ -25,93 +25,6 @@ export function useAudioDetection(isRecording) {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
 
-  // 마이크 초기화는 컴포넌트 마운트 시 한 번만 실행
-  useEffect(() => {
-    let isMounted = true;
-
-    async function initialize() {
-      // 이미 초기화 중이거나 완료된 경우 스킵
-      if (isInitializingRef.current || audioContextRef.current) {
-        return;
-      }
-
-      isInitializingRef.current = true;
-
-      try {
-        // 마이크 권한 요청 + WebRTC 잡음 제거
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,     // 에코 제거
-            noiseSuppression: true,     // 잡음 제거 (배경 소음 감소)
-            autoGainControl: true       // 자동 볼륨 조절
-          }
-        });
-
-        if (!isMounted) {
-          stream.getTracks().forEach(track => track.stop());
-          isInitializingRef.current = false;
-          audioContextRef.current = null;
-          analyserRef.current = null;
-          streamRef.current = null;
-          return;
-        }
-
-        streamRef.current = stream;
-
-        // AudioContext 생성
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const analyser = audioContext.createAnalyser();
-        const source = audioContext.createMediaStreamSource(stream);
-
-        // AnalyserNode 설정
-        analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.3; // 부드러운 전환
-        source.connect(analyser);
-
-        audioContextRef.current = audioContext;
-        analyserRef.current = analyser;
-
-        console.log('[AudioDetection] Microphone initialized successfully');
-        setIsInitialized(true);
-        isInitializingRef.current = false;
-      } catch (err) {
-        console.error('[AudioDetection] Initialization error:', err);
-        if (isMounted) {
-          setError(err.message);
-        }
-        isInitializingRef.current = false;
-      }
-    }
-
-    // 컴포넌트 마운트 시 초기화
-    initialize();
-
-    return () => {
-      isMounted = false;
-
-      // 애니메이션 중지
-      if (animationIdRef.current) {
-        cancelAnimationFrame(animationIdRef.current);
-      }
-
-      // AudioContext 종료
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-      }
-
-      // 스트림 정리
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
-      }
-
-      // 초기화 플래그 리셋 (재마운트 시 다시 초기화 가능하도록)
-      analyserRef.current = null;
-      isInitializingRef.current = false;
-    };
-  }, []); // 빈 의존성 배열 - 마운트 시 한 번만 실행
-
   const detectVolume = useCallback(() => {
     // 녹음 중이 아니면 루프를 유지하지 않음
     if (!isRecordingRef.current) {
@@ -156,27 +69,100 @@ export function useAudioDetection(isRecording) {
     animationIdRef.current = requestAnimationFrame(detectVolume);
   }, []);
 
-  // 녹음 상태에 따라 감지 루프 시작/중지
+  // 녹음 시작할 때만 마이크를 켜고, 녹음 종료/언마운트 시 완전히 끔
   useEffect(() => {
-    // 초기화가 아직이면 대기
-    if (!isInitialized) return;
+    let cancelled = false;
 
-    if (!isRecording) {
+    const cleanup = async () => {
       if (animationIdRef.current) {
         cancelAnimationFrame(animationIdRef.current);
         animationIdRef.current = null;
       }
-      // 녹음 중지 시 볼륨도 리셋
-      setAudioVolume(0);
-      return;
+
+      if (audioContextRef.current) {
+        try {
+          await audioContextRef.current.close();
+        } catch (_) {
+          // ignore
+        }
+        audioContextRef.current = null;
+      }
+
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+
+      analyserRef.current = null;
+      isInitializingRef.current = false;
+      if (!cancelled) {
+        setIsInitialized(false);
+        setAudioVolume(0);
+      }
+    };
+
+    const initialize = async () => {
+      if (isInitializingRef.current || audioContextRef.current) return;
+      isInitializingRef.current = true;
+      setError(null);
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = audioContext.createAnalyser();
+        const source = audioContext.createMediaStreamSource(stream);
+
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.3;
+        source.connect(analyser);
+
+        audioContextRef.current = audioContext;
+        analyserRef.current = analyser;
+
+        if (!cancelled) {
+          console.log('[AudioDetection] Microphone initialized successfully');
+          setIsInitialized(true);
+        }
+      } catch (err) {
+        console.error('[AudioDetection] Initialization error:', err);
+        if (!cancelled) setError(err.message);
+        await cleanup();
+      } finally {
+        isInitializingRef.current = false;
+      }
+    };
+
+    if (isRecording) {
+      initialize().then(() => {
+        if (cancelled) return;
+        if (!analyserRef.current || !audioContextRef.current) return;
+        if (animationIdRef.current) return;
+        lastUpdateAtRef.current = 0;
+        animationIdRef.current = requestAnimationFrame(detectVolume);
+      });
+    } else {
+      cleanup();
     }
 
-    // 이미 루프가 돌고 있으면 중복 시작 방지
-    if (animationIdRef.current) return;
-
-    lastUpdateAtRef.current = 0;
-    animationIdRef.current = requestAnimationFrame(detectVolume);
-  }, [isRecording, isInitialized, detectVolume]);
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  }, [isRecording, detectVolume]);
 
   return { audioVolume, error, isInitialized };
 }

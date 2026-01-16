@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
   Typography,
@@ -19,7 +20,6 @@ import {
   MicOff,
   SkipNext,
   SkipPrevious,
-  Replay,
   Visibility,
   VisibilityOff,
   GridOn,
@@ -30,28 +30,53 @@ import StudentLayout from '../../components/common/StudentLayout';
 import { useMediaPipe } from '../../hooks/conversation/useMediaPipe';
 import { useAudioDetection } from '../../hooks/conversation/useAudioDetection';
 import { useSpeakingTimer } from '../../hooks/conversation/useSpeakingTimer';
-import { useTTS } from '../../hooks/conversation/useTTS';
-import { useSpeechRecognition } from '../../hooks/conversation/useSpeechRecognition';
-import { useClaudeSentenceGenerator } from '../../hooks/conversation/useClaudeSentenceGenerator';
+import { useTTSAudio } from '../../hooks/useTTSAudio';
+import { useWhisperSTT } from '../../hooks/useWhisperSTT';
+
+// API
+import { generatePracticeSentences } from '../../api/sentences';
+import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
+import { evaluatePronunciation } from '../../api/stt';
 
 // Data & Utils
-import { sentences } from '../../data/conversation/sentences';
 import { validateSentence } from '../../utils/conversation/sentenceValidator';
 import { getScenarioById } from '../../data/conversation/scenarios';
-import { isApiKeyConfigured } from '../../service/conversation/claudeClient';
-import { buildTopicBatchSentencePrompt } from '../../utils/conversation/sentencePromptBuilder';
+
+// Redux
+import {
+  startSession,
+  endSession,
+  startPractice,
+  setReferenceAudioDuration,
+  completePractice,
+} from '../../store/slices/speakingStatsSlice';
+import {
+  selectCurrentPaceRatio,
+  selectSessionAvgPaceRatio,
+  selectNetSpeakingDensity,
+  getPaceRatioFeedback,
+  getNetSpeakingDensityFeedback,
+} from '../../store/selectors/speakingStatsSelectors';
 
 // Prevent duplicate calls (StrictMode mount/unmount) + add simple cache
 const sentenceBatchInFlight = new Map(); // key -> Promise<string[]>
 const sentenceBatchCache = new Map(); // key -> { sentences: {id,text}[], savedAt: number }
+const sentenceBatchFailAt = new Map(); // key -> lastFailedAt(ms)
 
 export default function PracticePage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const dispatch = useDispatch();
+
+  // Redux selectors
+  const currentPaceRatio = useSelector(selectCurrentPaceRatio);
+  const avgPaceRatio = useSelector(selectSessionAvgPaceRatio);
+  const netDensity = useSelector(selectNetSpeakingDensity);
 
   // Refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const cameraStreamRef = useRef(null);
 
   // Get difficulty from navigation state, default to '중'
   const difficulty = location.state?.difficulty || '중';
@@ -65,12 +90,12 @@ export default function PracticePage() {
   const [showGrid, setShowGrid] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [transcript, setTranscript] = useState('');
+  const [canGoNext, setCanGoNext] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(null);
   const [permissionError, setPermissionError] = useState(null);
   const [practiceSentences, setPracticeSentences] = useState([]); // { id, text }[]
   const [isSentenceLoading, setIsSentenceLoading] = useState(false);
   const [sentenceError, setSentenceError] = useState(null);
-  const [hasApiKey, setHasApiKey] = useState(true);
   const lastLoadKeyRef = useRef(null);
 
   // Hooks
@@ -86,26 +111,39 @@ export default function PracticePage() {
   const { totalTime, speakingTime, ratio, currentlySpeaking, resetTimers } =
     useSpeakingTimer(isRecording, landmarksRef, audioVolume);
 
-  const { speak, stop, isSpeaking } = useTTS();
+  const { playText, stop, isPlaying: isSpeaking, error: ttsError, getAudioDuration } = useTTSAudio();
+  const {
+    transcribe: whisperTranscribe,
+    status: whisperStatus,
+    error: whisperError,
+    progress: whisperProgress,
+  } = useWhisperSTT();
 
-  const { isSupported: sttSupported, transcript: sttTranscript } =
-    useSpeechRecognition(
-      isRecording,
-      (text) => setTranscript(text),
-      (error) => console.error('STT Error:', error)
-    );
+  // State - 발음 평가 및 STT
+  const [evaluationResult, setEvaluationResult] = useState(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingStartTimeRef = useRef(null);
+  const recordingTimerRef = useRef(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
 
-  const { generateBatchSentences } = useClaudeSentenceGenerator();
-
-  // API Key check
-  useEffect(() => {
-    setHasApiKey(isApiKeyConfigured());
-  }, []);
+  // 녹음 제한 설정 (30초)
+  const MAX_RECORDING_DURATION = 30 * 1000; // 30초
+  const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
 
   // Load/generate sentences by topic + difficulty
   useEffect(() => {
     let cancelled = false;
     const loadKey = `${topicId}:${difficulty}`;
+
+    // 실패 직후(예: StrictMode 재마운트) 중복 재요청 방지
+    const lastFailedAt = sentenceBatchFailAt.get(loadKey);
+    if (lastFailedAt && Date.now() - lastFailedAt < 15000) {
+      setSentenceError('서버 응답이 지연되어 잠시 후 다시 시도해주세요.');
+      return () => { cancelled = true; };
+    }
 
     // Avoid re-loading the exact same key repeatedly (e.g., due to unrelated rerenders)
     if (lastLoadKeyRef.current === loadKey && practiceSentences.length > 0) return;
@@ -116,13 +154,6 @@ export default function PracticePage() {
       setSentenceError(null);
 
       try {
-        // If no API key, fallback immediately
-        if (!hasApiKey) {
-          const fallback = sentences.slice(0, 10).map((s) => ({ id: s.id, text: s.text }));
-          if (!cancelled) setPracticeSentences(fallback);
-          return;
-        }
-
         // Cache hit (memory)
         const cached = sentenceBatchCache.get(loadKey);
         if (cached?.sentences?.length) {
@@ -139,23 +170,17 @@ export default function PracticePage() {
         // In-flight dedupe
         let promise = sentenceBatchInFlight.get(loadKey);
         if (!promise) {
-          const systemPrompt = buildTopicBatchSentencePrompt(topic, difficulty, 10);
-          promise = generateBatchSentences(systemPrompt, difficulty);
+          promise = generatePracticeSentences({
+            topic: toApiTopic(topicId),
+            difficulty: toApiDifficulty(difficulty),
+          });
           sentenceBatchInFlight.set(loadKey, promise);
         }
 
         const generated = await promise;
-
-        // Normalize to {id,text}
-        const normalized = (generated || [])
-          .filter((t) => typeof t === 'string' && t.trim().length > 0)
+        const finalList = (generated || [])
           .slice(0, 10)
-          .map((text, idx) => ({ id: `${topicId}-${difficulty}-${idx}`, text: text.trim() }));
-
-        const finalList =
-          normalized.length > 0
-            ? normalized
-            : sentences.slice(0, 10).map((s) => ({ id: s.id, text: s.text }));
+          .map((text, idx) => ({ id: `${topicId}-${difficulty}-${idx}`, text }));
 
         // IMPORTANT: cache should be written even if this component instance was unmounted (StrictMode)
         sentenceBatchCache.set(loadKey, { sentences: finalList, savedAt: Date.now() });
@@ -170,6 +195,7 @@ export default function PracticePage() {
       } catch (err) {
         sentenceBatchInFlight.delete(loadKey);
         console.error('[PracticePage] sentence generation error:', err);
+        sentenceBatchFailAt.set(loadKey, Date.now());
         if (!cancelled) {
           const isRateLimit =
             err?.status === 429 ||
@@ -179,11 +205,12 @@ export default function PracticePage() {
 
           setSentenceError(
             isRateLimit
-              ? 'Claude 요청이 너무 많아(429) 잠시 후 다시 시도해주세요.'
-              : (err?.message || '문장 생성에 실패했습니다.')
+              ? '문장 생성 요청이 너무 많아(429) 잠시 후 다시 시도해주세요.'
+              : (err?.code === 'ECONNABORTED'
+                  ? '서버 응답이 느립니다(타임아웃). 잠시 후 다시 시도해주세요.'
+                  : (err?.message || '문장 생성에 실패했습니다.'))
           );
-          const fallback = sentences.slice(0, 10).map((s) => ({ id: s.id, text: s.text }));
-          setPracticeSentences(fallback);
+          setPracticeSentences([]);
         }
       } finally {
         sentenceBatchInFlight.delete(loadKey);
@@ -195,18 +222,39 @@ export default function PracticePage() {
     return () => {
       cancelled = true;
     };
-  }, [topicId, topic, difficulty, hasApiKey, generateBatchSentences, resetTimers]);
+  }, [topicId, difficulty, resetTimers]);
 
   // Current sentence
   // API 호출 전에는 기본 문장(목업) 노출하지 않음. (에러/키없음 시에는 practiceSentences에 fallback이 들어감)
   const sentenceList = practiceSentences;
   const currentSentence = sentenceList[currentIndex];
 
+  // Redux: 세션 시작/종료
+  useEffect(() => {
+    dispatch(startSession({ sessionType: 'practice' }));
+    return () => {
+      dispatch(endSession());
+    };
+  }, [dispatch]);
+
+  // Redux: 문장 변경 시 연습 시작
+  useEffect(() => {
+    if (currentSentence) {
+      dispatch(startPractice({ sentenceId: currentSentence.id }));
+    }
+  }, [currentSentence, dispatch]);
+
   // Request camera permission
   useEffect(() => {
+    let cancelled = false;
     const requestCamera = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        cameraStreamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
@@ -221,9 +269,23 @@ export default function PracticePage() {
     requestCamera();
 
     return () => {
-      if (videoRef.current?.srcObject) {
-        const tracks = videoRef.current.srcObject.getTracks();
-        tracks.forEach((track) => track.stop());
+      cancelled = true;
+      // 녹음 타이머 정리
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      // 녹음 중이면 중지
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      // videoRef가 이미 null이어도 streamRef로 안전하게 정리
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
       }
     };
   }, []);
@@ -234,9 +296,9 @@ export default function PracticePage() {
       const result = validateSentence(currentSentence.text, transcript);
       setValidationResult(result);
 
-      // Auto-advance if passed
-      if (result.passed && currentIndex < sentenceList.length - 1) {
-        setTimeout(() => handleNext(), 2000);
+      // 정확도 통과 시 '다음' 버튼만 활성화 (자동 이동 X)
+      if (result.passed) {
+        setCanGoNext(true);
       }
     }
   }, [transcript, currentSentence, currentIndex, sentenceList.length]);
@@ -247,6 +309,7 @@ export default function PracticePage() {
       setCurrentIndex(currentIndex + 1);
       setValidationResult(null);
       setTranscript('');
+      setCanGoNext(false);
       resetTimers();
     }
   };
@@ -256,24 +319,129 @@ export default function PracticePage() {
       setCurrentIndex(currentIndex - 1);
       setValidationResult(null);
       setTranscript('');
+      setCanGoNext(false);
       resetTimers();
     }
   };
 
-  const handlePlaySentence = () => {
+  const handlePlaySentence = async () => {
     if (currentSentence) {
-      speak(currentSentence.text, { lang: 'en-US', rate: 0.9 });
+      await playText(currentSentence.text);
+      // TTS 재생 후 duration 설정
+      const duration = getAudioDuration();
+      if (duration > 0) {
+        dispatch(setReferenceAudioDuration({ duration }));
+      }
     }
   };
 
-  const toggleRecording = () => {
+  const toggleRecording = async () => {
     if (isRecording) {
+      // 녹음 중지
       setIsRecording(false);
+      setRecordingDuration(0);
+
+      // 타이머 정리
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+
+      // MediaRecorder 중지
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+
+      // 녹음 종료 시 연습 완료 (Pace Ratio 계산)
+      dispatch(completePractice({ userSpeakingTime: speakingTime }));
     } else {
+      // 녹음 시작
       setValidationResult(null);
       setTranscript('');
+      setCanGoNext(false);
+      setEvaluationResult(null);
+      setRecordingDuration(0);
       resetTimers();
-      setIsRecording(true);
+      audioChunksRef.current = [];
+      recordingStartTimeRef.current = Date.now();
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+
+        // 녹음 시간 타이머 시작
+        recordingTimerRef.current = setInterval(() => {
+          const elapsed = Date.now() - recordingStartTimeRef.current;
+          setRecordingDuration(elapsed);
+
+          // 최대 시간 초과 시 자동 중지
+          if (elapsed >= MAX_RECORDING_DURATION) {
+            toggleRecording();
+          }
+        }, 100);
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          // 녹음 데이터를 Blob으로 변환
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+          // STT 처리
+          if (currentSentence && audioBlob.size > 0) {
+            // 파일 크기 체크
+            if (audioBlob.size > MAX_AUDIO_SIZE) {
+              console.error('Audio file too large:', audioBlob.size);
+              setTranscript('');
+              alert(`녹음 파일이 너무 큽니다 (${(audioBlob.size / 1024 / 1024).toFixed(1)}MB). 더 짧게 녹음해주세요.`);
+              stream.getTracks().forEach(track => track.stop());
+              return;
+            }
+
+            setIsTranscribing(true);
+            try {
+              const transcribedText = await whisperTranscribe(audioBlob);
+              setTranscript(transcribedText);
+
+              // 발음 평가
+              if (transcribedText) {
+                setIsEvaluating(true);
+                try {
+                  const result = await evaluatePronunciation({
+                    originalText: currentSentence.text,
+                    transcribedText: transcribedText,
+                    sentenceId: currentSentence.id,
+                    audioDurationMs: speakingTime,
+                  });
+                  setEvaluationResult(result.evaluation);
+                } catch (error) {
+                  console.error('Pronunciation evaluation error:', error);
+                  setEvaluationResult(null);
+                } finally {
+                  setIsEvaluating(false);
+                }
+              }
+            } catch (error) {
+              console.error('STT error:', error);
+              setTranscript('');
+            } finally {
+              setIsTranscribing(false);
+            }
+          }
+
+          // 스트림 정리
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+      } catch (error) {
+        console.error('Failed to start recording:', error);
+      }
     }
   };
 
@@ -285,13 +453,6 @@ export default function PracticePage() {
   return (
     <StudentLayout todayTime={Math.floor(totalTime / 1000 / 60)}>
       <Box sx={{ maxWidth: 1200, mx: 'auto', width: '100%' }}>
-        {/* API Key Warning */}
-        {!hasApiKey && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Claude API 키가 설정되지 않았습니다. .env.local 파일에 VITE_CLAUDE_API_KEY를 추가해주세요. (임시 문장으로 진행 중)
-          </Alert>
-        )}
-
         {/* Permission Error */}
         {hasCameraPermission === false && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -308,7 +469,22 @@ export default function PracticePage() {
         )}
         {sentenceError && (
           <Alert severity="warning" sx={{ mb: 2 }}>
-            {sentenceError} (임시 문장으로 진행 중)
+            {sentenceError}
+          </Alert>
+        )}
+        {ttsError && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            TTS 오류: {ttsError}
+          </Alert>
+        )}
+        {(whisperStatus === 'loading' || whisperProgress) && !isTranscribing && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            STT 모델 {whisperProgress?.percent != null ? `다운로드 중... ${whisperProgress.percent}%` : '준비 중...'} (초기 1회 로딩)
+          </Alert>
+        )}
+        {whisperError && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            STT 오류: {whisperError}
           </Alert>
         )}
 
@@ -395,18 +571,87 @@ export default function PracticePage() {
                   >
                     {currentSentence?.text || (isSentenceLoading ? '문장 생성 중...' : '문장을 불러오지 못했습니다')}
                   </Typography>
-                  <Button
-                    variant="contained"
-                    startIcon={<VolumeUp />}
-                    onClick={handlePlaySentence}
-                    disabled={isSpeaking || !currentSentence}
-                    sx={{
-                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                      px: 4,
-                    }}
-                  >
-                    {isSpeaking ? '재생 중...' : '듣기'}
-                  </Button>
+
+                  {/* 컨트롤 버튼 */}
+                  <Stack direction="row" spacing={2} justifyContent="center" sx={{ mb: 2 }}>
+                    <Button
+                      variant="outlined"
+                      startIcon={<SkipPrevious />}
+                      onClick={handlePrev}
+                      disabled={currentIndex === 0 || isRecording}
+                    >
+                      이전
+                    </Button>
+                    <Button
+                      variant="contained"
+                      startIcon={<VolumeUp />}
+                      onClick={handlePlaySentence}
+                      disabled={isSpeaking || !currentSentence}
+                      sx={{
+                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                      }}
+                    >
+                      {isSpeaking ? '재생 중...' : '듣기'}
+                    </Button>
+                    <Button
+                      variant={isRecording ? 'contained' : 'outlined'}
+                      color={isRecording ? 'error' : 'primary'}
+                      startIcon={isRecording ? <MicOff /> : <Mic />}
+                      onClick={toggleRecording}
+                      disabled={!currentSentence}
+                    >
+                      {isRecording ? `중지 (${Math.floor((MAX_RECORDING_DURATION - recordingDuration) / 1000)}초)` : '녹음'}
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      startIcon={<SkipNext />}
+                      onClick={handleNext}
+                      disabled={currentIndex >= sentenceList.length - 1 || isRecording || !canGoNext}
+                    >
+                      다음
+                    </Button>
+                  </Stack>
+
+                  {/* STT 처리 중 */}
+                  {isTranscribing && (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <CircularProgress size={24} />
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                        음성 인식 중...
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* 발음 평가 결과 */}
+                  {isEvaluating && (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <CircularProgress size={24} />
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                        발음 평가 중...
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {evaluationResult && !isEvaluating && (
+                    <Alert severity={evaluationResult.overallScore >= 80 ? 'success' : evaluationResult.overallScore >= 60 ? 'info' : 'warning'} sx={{ textAlign: 'left' }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                        발음 점수: {evaluationResult.overallScore}점 | 정확도: {evaluationResult.wordAccuracy}%
+                      </Typography>
+                      {evaluationResult.missedWords && evaluationResult.missedWords.length > 0 && (
+                        <Typography variant="caption" color="error.main" sx={{ display: 'block' }}>
+                          놓친 단어: {evaluationResult.missedWords.join(', ')}
+                        </Typography>
+                      )}
+                      {evaluationResult.extraWords && evaluationResult.extraWords.length > 0 && (
+                        <Typography variant="caption" color="warning.main" sx={{ display: 'block' }}>
+                          추가된 단어: {evaluationResult.extraWords.join(', ')}
+                        </Typography>
+                      )}
+                      <Typography variant="caption" sx={{ display: 'block', mt: 0.5 }}>
+                        {evaluationResult.feedback}
+                      </Typography>
+                    </Alert>
+                  )}
                 </Box>
 
                 {/* 난이도 표시 */}
@@ -416,6 +661,18 @@ export default function PracticePage() {
                     <Chip label={`난이도: ${difficulty}`} color="primary" size="small" />
                   </Stack>
                 </Box>
+
+                {/* STT 결과 (주제/난이도 아래) */}
+                {transcript && !isTranscribing && (
+                  <Box sx={{ mt: 1.5, p: 2, bgcolor: 'primary.50', border: 1, borderColor: 'primary.200', borderRadius: 2 }}>
+                    <Typography variant="subtitle2" color="primary.main" sx={{ fontWeight: 600, mb: 1 }}>
+                      🎤 인식된 텍스트
+                    </Typography>
+                    <Typography variant="body1" sx={{ fontStyle: 'italic', color: 'text.primary', fontWeight: 500 }}>
+                      "{transcript}"
+                    </Typography>
+                  </Box>
+                )}
               </Stack>
             </CardContent>
           </Card>
@@ -482,81 +739,71 @@ export default function PracticePage() {
           </CardContent>
         </Card>
 
-        {/* 하단 영역: 검증 & 컨트롤 */}
-        <Card elevation={2}>
+        {/* 통계 카드 */}
+        <Card elevation={2} sx={{ mb: 3 }}>
           <CardContent>
-            <Stack spacing={3}>
-              {/* STT 결과 */}
-              {transcript && (
-                <Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    인식된 텍스트:
-                  </Typography>
-                  <Typography variant="body1" sx={{ fontStyle: 'italic', color: 'text.primary' }}>
-                    "{transcript}"
-                  </Typography>
-                </Box>
-              )}
+            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+              📊 통계
+            </Typography>
+            <Stack spacing={2}>
+              {/* Pace Ratio */}
+              <Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  속도 비율 (Pace Ratio)
+                </Typography>
+                <Stack direction="row" spacing={2}>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                      {currentPaceRatio ? currentPaceRatio.toFixed(2) : '-'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      현재
+                    </Typography>
+                  </Box>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                      {avgPaceRatio ? avgPaceRatio.toFixed(2) : '-'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      평균
+                    </Typography>
+                  </Box>
+                </Stack>
+                {currentPaceRatio && (
+                  <Chip
+                    label={getPaceRatioFeedback(currentPaceRatio).message}
+                    size="small"
+                    sx={{
+                      mt: 1,
+                      bgcolor: getPaceRatioFeedback(currentPaceRatio).color + '.100',
+                      color: getPaceRatioFeedback(currentPaceRatio).color + '.800',
+                    }}
+                  />
+                )}
+              </Box>
 
-              {/* 검증 피드백 */}
-              {validationResult && (
-                <Alert
-                  severity={validationResult.passed ? 'success' : 'warning'}
-                  sx={{ borderRadius: 2 }}
-                >
-                  <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>
-                    점수: {validationResult.score}점
-                  </Typography>
-                  <Typography variant="body2">{validationResult.feedback.message}</Typography>
-                </Alert>
-              )}
-
-              {/* 컨트롤 버튼 */}
-              <Stack direction="row" spacing={2} justifyContent="center">
-                <Button
-                  variant="outlined"
-                  startIcon={<SkipPrevious />}
-                  onClick={handlePrev}
-                  disabled={currentIndex === 0 || isRecording}
-                >
-                  이전
-                </Button>
-
-                <Button
-                  variant="outlined"
-                  startIcon={<Replay />}
-                  onClick={handlePlaySentence}
-                  disabled={isSpeaking || isRecording}
-                >
-                  다시 듣기
-                </Button>
-
-                <Button
-                  variant="contained"
-                  startIcon={isRecording ? <MicOff /> : <Mic />}
-                  onClick={toggleRecording}
-                  color={isRecording ? 'error' : 'primary'}
+              {/* Net Speaking Density */}
+              <Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  발화 밀도 (Net Speaking Density)
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                  {netDensity.toFixed(1)}%
+                </Typography>
+                <Chip
+                  label={getNetSpeakingDensityFeedback(netDensity).message}
+                  size="small"
                   sx={{
-                    background: isRecording
-                      ? undefined
-                      : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    mt: 1,
+                    bgcolor: getNetSpeakingDensityFeedback(netDensity).color + '.100',
+                    color: getNetSpeakingDensityFeedback(netDensity).color + '.800',
                   }}
-                >
-                  {isRecording ? '녹음 중지' : '녹음 시작'}
-                </Button>
-
-                <Button
-                  variant="outlined"
-                  endIcon={<SkipNext />}
-                  onClick={handleNext}
-                  disabled={currentIndex === sentenceList.length - 1 || isRecording}
-                >
-                  다음
-                </Button>
-              </Stack>
+                />
+              </Box>
             </Stack>
           </CardContent>
         </Card>
+
       </Box>
     </StudentLayout>
   );

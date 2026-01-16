@@ -197,9 +197,9 @@ function drawOverlay(canvas, video, landmarks, { showGrid, showMouthLandmarks })
     if (!p) return;
     const x = p.x * width;
     const y = p.y * height;
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, 2 * Math.PI);
-    ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, 2 * Math.PI);
+      ctx.fill();
   });
 
   // 입술 랜드마크 연결선(세로/가로)
