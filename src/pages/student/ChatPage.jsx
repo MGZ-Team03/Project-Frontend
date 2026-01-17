@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import {useState, useRef, useEffect, useCallback} from 'react';
+import { useLocation, useNavigate} from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -40,8 +40,11 @@ import { useSpeechRecognition } from '../../hooks/conversation/useSpeechRecognit
 import { useClaudeConversation } from '../../hooks/conversation/useClaudeConversation';
 
 // Data
-import { scenarios, getScenarioById } from '../../data/conversation/scenarios';
+import {  getScenarioById } from '../../data/conversation/scenarios';
 import { isApiKeyConfigured } from '../../service/conversation/claudeClient';
+import {useSelector} from "react-redux";
+import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
+
 
 export default function ChatPage() {
   const location = useLocation();
@@ -91,6 +94,31 @@ export default function ChatPage() {
 
   // Hooks - TTS & STT
   const { speak, stop, isSpeaking } = useTTS();
+
+  const user = useSelector(state => state.auth.user);
+
+  const getData = useCallback(() => {
+    console.log("websocket 실행!!");
+
+    if(!user?.email) {
+      console.log("❌ 사용자 정보 없음");
+      return null;
+    }
+
+    return {
+      action: "status",
+      data:{
+        tutorEmail: user.tutorEmail || "unknown@example.com",
+        studentEmail: user.email,
+        status: "active",
+        room: "ai",
+        assignedAt: new Date().toISOString().split("T")[0],
+      }
+    };
+  }, [user?.email]); // ← tutorEmail도 추가!
+
+// ✅ 함수 자체를 전달 (실행하지 않음!)
+  const socket = useWebSocket(getData);
 
   const { transcript } = useSpeechRecognition(
     isRecording,
