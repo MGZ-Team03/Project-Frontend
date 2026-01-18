@@ -1,7 +1,6 @@
-// 문장 연습 페이지 + 튜터 피드백
-
-import { useState, useEffect } from 'react';
-import { useSelector } from 'react-redux';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
   Typography,
@@ -11,236 +10,802 @@ import {
   LinearProgress,
   Stack,
   Chip,
-  Avatar,
-  Paper,
-  Snackbar,
   Alert,
+  CircularProgress,
+  IconButton,
 } from '@mui/material';
 import {
   VolumeUp,
-  SkipPrevious,
-  SkipNext,
-  Replay,
   Mic,
-  Notifications,
+  MicOff,
+  SkipNext,
+  SkipPrevious,
+  Visibility,
+  VisibilityOff,
+  GridOn,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { getFeedbackHistory } from '../../api/tutorFeedback';
 
-// 샘플 문장 데이터
-const SAMPLE_SENTENCES = [
-  { id: 1, text: "How are you doing today?", category: "greeting" },
-  { id: 2, text: "The weather is nice today.", category: "daily" },
-  { id: 3, text: "What time is it now?", category: "time" },
-  { id: 4, text: "I would like a cup of coffee.", category: "cafe" },
-  { id: 5, text: "Where is the nearest subway station?", category: "direction" },
-];
+// Hooks
+import { useMediaPipe } from '../../hooks/conversation/useMediaPipe';
+import { useAudioDetection } from '../../hooks/conversation/useAudioDetection';
+import { useSpeakingTimer } from '../../hooks/conversation/useSpeakingTimer';
+import { useTTSAudio } from '../../hooks/useTTSAudio';
+import { useWhisperSTT } from '../../hooks/useWhisperSTT';
+
+// API
+import { generatePracticeSentences } from '../../api/sentences';
+import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
+import { evaluatePronunciation } from '../../api/stt';
+
+// Data & Utils
+import { validateSentence } from '../../utils/conversation/sentenceValidator';
+import { getScenarioById } from '../../data/conversation/scenarios';
+
+// Redux
+import {
+  startSession,
+  endSession,
+  startPractice,
+  setReferenceAudioDuration,
+  completePractice,
+} from '../../store/slices/speakingStatsSlice';
+import {
+  selectCurrentPaceRatio,
+  selectSessionAvgPaceRatio,
+  selectNetSpeakingDensity,
+  getPaceRatioFeedback,
+  getNetSpeakingDensityFeedback,
+} from '../../store/selectors/speakingStatsSelectors';
+
+// Prevent duplicate calls (StrictMode mount/unmount) + add simple cache
+const sentenceBatchInFlight = new Map(); // key -> Promise<string[]>
+const sentenceBatchCache = new Map(); // key -> { sentences: {id,text}[], savedAt: number }
+const sentenceBatchFailAt = new Map(); // key -> lastFailedAt(ms)
 
 export default function PracticePage() {
-  const user = useSelector((state) => state.auth.user);
-  const userEmail = user?.email;
+  const location = useLocation();
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
 
+  // Redux selectors
+  const currentPaceRatio = useSelector(selectCurrentPaceRatio);
+  const avgPaceRatio = useSelector(selectSessionAvgPaceRatio);
+  const netDensity = useSelector(selectNetSpeakingDensity);
+
+  // Refs
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+
+  // Get difficulty from navigation state, default to '중'
+  const difficulty = location.state?.difficulty || '중';
+  const topicId = location.state?.topicId || 'restaurant';
+  const topic = useMemo(() => getScenarioById(topicId) || getScenarioById('restaurant'), [topicId]);
+
+  // State
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [speakingTime, setSpeakingTime] = useState(0);
-  const [totalTime, setTotalTime] = useState(0);
-  const [feedbacks, setFeedbacks] = useState([]);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+  const [isRecording, setIsRecording] = useState(false);
+  const [showMouthLandmarks, setShowMouthLandmarks] = useState(false);
+  const [showGrid, setShowGrid] = useState(false);
+  const [validationResult, setValidationResult] = useState(null);
+  const [transcript, setTranscript] = useState('');
+  const [canGoNext, setCanGoNext] = useState(false);
+  const [hasCameraPermission, setHasCameraPermission] = useState(null);
+  const [permissionError, setPermissionError] = useState(null);
+  const [practiceSentences, setPracticeSentences] = useState([]); // { id, text }[]
+  const [isSentenceLoading, setIsSentenceLoading] = useState(false);
+  const [sentenceError, setSentenceError] = useState(null);
+  const lastLoadKeyRef = useRef(null);
 
-  // WebSocket 연결
-  const handleWebSocketMessage = (message) => {
-    if (message.type === 'feedback') {
-      setFeedbacks((prev) => [message, ...prev]);
-      setSnackbar({
-        open: true,
-        message: `튜터 피드백: ${message.message}`,
-        severity: 'success',
-      });
+  // Hooks
+  const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
+    videoRef,
+    canvasRef,
+    { showGrid, showMouthLandmarks }
+  );
 
-      // 브라우저 알림
-      if (Notification.permission === 'granted') {
-        new Notification('튜터 피드백', {
-          body: message.message,
-          icon: '/tutor-icon.png',
-        });
+  const { audioVolume, error: audioError, isInitialized: isAudioInit } =
+    useAudioDetection(isRecording);
+
+  const { totalTime, speakingTime, ratio, currentlySpeaking, resetTimers } =
+    useSpeakingTimer(isRecording, landmarksRef, audioVolume);
+
+  const { playText, stop, isPlaying: isSpeaking, error: ttsError, getAudioDuration } = useTTSAudio();
+  const {
+    transcribe: whisperTranscribe,
+    status: whisperStatus,
+    error: whisperError,
+    progress: whisperProgress,
+  } = useWhisperSTT();
+
+  // State - 발음 평가 및 STT
+  const [evaluationResult, setEvaluationResult] = useState(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingStartTimeRef = useRef(null);
+  const recordingTimerRef = useRef(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+
+  // 녹음 제한 설정 (30초)
+  const MAX_RECORDING_DURATION = 30 * 1000; // 30초
+  const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
+
+  // Load/generate sentences by topic + difficulty
+  useEffect(() => {
+    let cancelled = false;
+    const loadKey = `${topicId}:${difficulty}`;
+
+    // 실패 직후(예: StrictMode 재마운트) 중복 재요청 방지
+    const lastFailedAt = sentenceBatchFailAt.get(loadKey);
+    if (lastFailedAt && Date.now() - lastFailedAt < 15000) {
+      setSentenceError('서버 응답이 지연되어 잠시 후 다시 시도해주세요.');
+      return () => { cancelled = true; };
+    }
+
+    // Avoid re-loading the exact same key repeatedly (e.g., due to unrelated rerenders)
+    if (lastLoadKeyRef.current === loadKey && practiceSentences.length > 0) return;
+    lastLoadKeyRef.current = loadKey;
+
+    const load = async () => {
+      setIsSentenceLoading(true);
+      setSentenceError(null);
+
+      try {
+        // Cache hit (memory)
+        const cached = sentenceBatchCache.get(loadKey);
+        if (cached?.sentences?.length) {
+          if (!cancelled) {
+            setPracticeSentences(cached.sentences);
+            setCurrentIndex(0);
+            setValidationResult(null);
+            setTranscript('');
+            resetTimers();
+          }
+          return;
+        }
+
+        // In-flight dedupe
+        let promise = sentenceBatchInFlight.get(loadKey);
+        if (!promise) {
+          promise = generatePracticeSentences({
+            topic: toApiTopic(topicId),
+            difficulty: toApiDifficulty(difficulty),
+          });
+          sentenceBatchInFlight.set(loadKey, promise);
+        }
+
+        const generated = await promise;
+        const finalList = (generated || [])
+          .slice(0, 10)
+          .map((text, idx) => ({ id: `${topicId}-${difficulty}-${idx}`, text }));
+
+        // IMPORTANT: cache should be written even if this component instance was unmounted (StrictMode)
+        sentenceBatchCache.set(loadKey, { sentences: finalList, savedAt: Date.now() });
+
+        if (!cancelled) {
+          setPracticeSentences(finalList);
+          setCurrentIndex(0);
+          setValidationResult(null);
+          setTranscript('');
+          resetTimers();
+        }
+      } catch (err) {
+        sentenceBatchInFlight.delete(loadKey);
+        console.error('[PracticePage] sentence generation error:', err);
+        sentenceBatchFailAt.set(loadKey, Date.now());
+        if (!cancelled) {
+          const isRateLimit =
+            err?.status === 429 ||
+            err?.response?.status === 429 ||
+            String(err?.message || '').includes('rate_limit') ||
+            String(err?.message || '').includes('429');
+
+          setSentenceError(
+            isRateLimit
+              ? '문장 생성 요청이 너무 많아(429) 잠시 후 다시 시도해주세요.'
+              : (err?.code === 'ECONNABORTED'
+                  ? '서버 응답이 느립니다(타임아웃). 잠시 후 다시 시도해주세요.'
+                  : (err?.message || '문장 생성에 실패했습니다.'))
+          );
+          setPracticeSentences([]);
+        }
+      } finally {
+        sentenceBatchInFlight.delete(loadKey);
+        if (!cancelled) setIsSentenceLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [topicId, difficulty, resetTimers]);
+
+  // Current sentence
+  // API 호출 전에는 기본 문장(목업) 노출하지 않음. (에러/키없음 시에는 practiceSentences에 fallback이 들어감)
+  const sentenceList = practiceSentences;
+  const currentSentence = sentenceList[currentIndex];
+
+  // Redux: 세션 시작/종료
+  useEffect(() => {
+    dispatch(startSession({ sessionType: 'practice' }));
+    return () => {
+      dispatch(endSession());
+    };
+  }, [dispatch]);
+
+  // Redux: 문장 변경 시 연습 시작
+  useEffect(() => {
+    if (currentSentence) {
+      dispatch(startPractice({ sentenceId: currentSentence.id }));
+    }
+  }, [currentSentence, dispatch]);
+
+  // Request camera permission
+  useEffect(() => {
+    let cancelled = false;
+    const requestCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        cameraStreamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        setHasCameraPermission(true);
+      } catch (err) {
+        console.error('Camera permission error:', err);
+        setPermissionError(err.message);
+        setHasCameraPermission(false);
+      }
+    };
+
+    requestCamera();
+
+    return () => {
+      cancelled = true;
+      // 녹음 타이머 정리
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      // 녹음 중이면 중지
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      // videoRef가 이미 null이어도 streamRef로 안전하게 정리
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, []);
+
+  // Validate when transcript changes
+  useEffect(() => {
+    if (transcript && currentSentence) {
+      const result = validateSentence(currentSentence.text, transcript);
+      setValidationResult(result);
+
+      // 정확도 통과 시 '다음' 버튼만 활성화 (자동 이동 X)
+      if (result.passed) {
+        setCanGoNext(true);
       }
     }
-  };
+  }, [transcript, currentSentence, currentIndex, sentenceList.length]);
 
-  const { isConnected, error } = useWebSocket(userEmail, handleWebSocketMessage);
-
-  // 피드백 히스토리 불러오기
-  useEffect(() => {
-    if (userEmail) {
-      getFeedbackHistory(userEmail, 10)
-        .then((data) => setFeedbacks(data || []))
-        .catch((err) => console.error('Failed to fetch feedback history:', err));
-    }
-
-    // 알림 권한 요청
-    if (Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-  }, [userEmail]);
-
-  const currentSentence = SAMPLE_SENTENCES[currentIndex];
-  const progress = Math.round((speakingTime / (totalTime || 1)) * 100);
-
+  // Handlers
   const handleNext = () => {
-    if (currentIndex < SAMPLE_SENTENCES.length - 1) {
+    if (sentenceList.length > 0 && currentIndex < sentenceList.length - 1) {
       setCurrentIndex(currentIndex + 1);
-      setSpeakingTime(speakingTime + Math.floor(Math.random() * 5) + 1);
-      setTotalTime(totalTime + 10);
+      setValidationResult(null);
+      setTranscript('');
+      setCanGoNext(false);
+      resetTimers();
     }
   };
 
   const handlePrev = () => {
-    if (currentIndex > 0) {
+    if (sentenceList.length > 0 && currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
+      setValidationResult(null);
+      setTranscript('');
+      setCanGoNext(false);
+      resetTimers();
     }
   };
 
+  const handlePlaySentence = async () => {
+    if (currentSentence) {
+      await playText(currentSentence.text);
+      // TTS 재생 후 duration 설정
+      const duration = getAudioDuration();
+      if (duration > 0) {
+        dispatch(setReferenceAudioDuration({ duration }));
+      }
+    }
+  };
+
+  const toggleRecording = async () => {
+    if (isRecording) {
+      // 녹음 중지
+      setIsRecording(false);
+      setRecordingDuration(0);
+
+      // 타이머 정리
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+
+      // MediaRecorder 중지
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+
+      // 녹음 종료 시 연습 완료 (Pace Ratio 계산)
+      dispatch(completePractice({ userSpeakingTime: speakingTime }));
+    } else {
+      // 녹음 시작
+      setValidationResult(null);
+      setTranscript('');
+      setCanGoNext(false);
+      setEvaluationResult(null);
+      setRecordingDuration(0);
+      resetTimers();
+      audioChunksRef.current = [];
+      recordingStartTimeRef.current = Date.now();
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+
+        // 녹음 시간 타이머 시작
+        recordingTimerRef.current = setInterval(() => {
+          const elapsed = Date.now() - recordingStartTimeRef.current;
+          setRecordingDuration(elapsed);
+
+          // 최대 시간 초과 시 자동 중지
+          if (elapsed >= MAX_RECORDING_DURATION) {
+            toggleRecording();
+          }
+        }, 100);
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          // 녹음 데이터를 Blob으로 변환
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+          // STT 처리
+          if (currentSentence && audioBlob.size > 0) {
+            // 파일 크기 체크
+            if (audioBlob.size > MAX_AUDIO_SIZE) {
+              console.error('Audio file too large:', audioBlob.size);
+              setTranscript('');
+              alert(`녹음 파일이 너무 큽니다 (${(audioBlob.size / 1024 / 1024).toFixed(1)}MB). 더 짧게 녹음해주세요.`);
+              stream.getTracks().forEach(track => track.stop());
+              return;
+            }
+
+            setIsTranscribing(true);
+            try {
+              const transcribedText = await whisperTranscribe(audioBlob);
+              setTranscript(transcribedText);
+
+              // 발음 평가
+              if (transcribedText) {
+                setIsEvaluating(true);
+                try {
+                  const result = await evaluatePronunciation({
+                    originalText: currentSentence.text,
+                    transcribedText: transcribedText,
+                    sentenceId: currentSentence.id,
+                    audioDurationMs: speakingTime,
+                  });
+                  setEvaluationResult(result.evaluation);
+                } catch (error) {
+                  console.error('Pronunciation evaluation error:', error);
+                  setEvaluationResult(null);
+                } finally {
+                  setIsEvaluating(false);
+                }
+              }
+            } catch (error) {
+              console.error('STT error:', error);
+              setTranscript('');
+            } finally {
+              setIsTranscribing(false);
+            }
+          }
+
+          // 스트림 정리
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+      } catch (error) {
+        console.error('Failed to start recording:', error);
+      }
+    }
+  };
+
+  const formatTime = (ms) => {
+    const seconds = Math.floor(ms / 1000);
+    return `${seconds}초`;
+  };
+
   return (
-    <StudentLayout todayTime={totalTime}>
-      <Box 
-        sx={{ 
-          flex: 1, 
-          display: 'flex', 
-          flexDirection: 'column',
-          alignItems: 'center', 
-          justifyContent: 'center',
-          gap: 2,
-          p: 2,
-        }}
-      >
-        {/* WebSocket 상태 + 튜터 피드백 알림 */}
-        <Box sx={{ width: '100%', maxWidth: 600 }}>
-          <Stack direction="row" spacing={1} alignItems="center" justifyContent="flex-end" mb={1}>
-            <Chip 
-              icon={<Notifications />}
-              label={isConnected ? '연결됨' : '연결 안됨'}
-              color={isConnected ? 'success' : 'error'}
-              size="small"
-            />
-          </Stack>
+    <StudentLayout todayTime={Math.floor(totalTime / 1000 / 60)}>
+      <Box sx={{ maxWidth: 1200, mx: 'auto', width: '100%' }}>
+        {/* Permission Error */}
+        {hasCameraPermission === false && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            카메라 권한이 필요합니다. 브라우저 설정에서 권한을 허용해주세요.
+          </Alert>
+        )}
 
-          {/* 튜터 피드백 영역 (최근 1개만 표시) */}
-          {feedbacks.length > 0 && (
-            <Card sx={{ mb: 2, bgcolor: '#fff3e0' }} elevation={2}>
-              <CardContent sx={{ py: 1.5, px: 2 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Avatar sx={{ width: 28, height: 28, bgcolor: 'primary.main', fontSize: 16 }}>
-                    👨‍🏫
-                  </Avatar>
-                  <Box flex={1}>
-                    <Typography variant="body2" fontWeight="bold">
-                      튜터 피드백
-                    </Typography>
-                    <Typography variant="body2">
-                      {feedbacks[0].message}
-                    </Typography>
-                    {feedbacks[0].audioUrl && (
-                      <audio controls src={feedbacks[0].audioUrl} style={{ width: '100%', height: 28, marginTop: 4 }} />
-                    )}
-                  </Box>
-                </Stack>
-              </CardContent>
-            </Card>
-          )}
-        </Box>
+        {/* Sentence Loading/Error */}
+        {isSentenceLoading && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <CircularProgress size={20} sx={{ mr: 1 }} />
+            문장 생성 중...
+          </Alert>
+        )}
+        {sentenceError && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            {sentenceError}
+          </Alert>
+        )}
+        {ttsError && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            TTS 오류: {ttsError}
+          </Alert>
+        )}
+        {(whisperStatus === 'loading' || whisperProgress) && !isTranscribing && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            STT 모델 {whisperProgress?.percent != null ? `다운로드 중... ${whisperProgress.percent}%` : '준비 중...'} (초기 1회 로딩)
+          </Alert>
+        )}
+        {whisperError && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            STT 오류: {whisperError}
+          </Alert>
+        )}
 
-        <Card sx={{ maxWidth: 600, width: '100%' }} elevation={3}>
-          <CardContent sx={{ p: 4 }}>
-            {/* 문장 표시 */}
-            <Box sx={{ textAlign: 'center', mb: 4 }}>
-              <Typography 
-                variant="h4" 
-                sx={{ 
-                  mb: 3, 
-                  fontWeight: 500,
-                  color: 'text.primary',
-                  lineHeight: 1.5,
-                }}
-              >
-                {currentSentence.text}
-              </Typography>
-              <Button
-                variant="contained"
-                startIcon={<VolumeUp />}
-                size="large"
-                sx={{
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  px: 4,
-                }}
-              >
-                듣기
-              </Button>
-            </Box>
+        {/* MediaPipe Loading */}
+        {!isModelLoaded && hasCameraPermission && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <CircularProgress size={20} sx={{ mr: 1 }} />
+            얼굴 인식 모델 로딩 중...
+          </Alert>
+        )}
 
-            {/* 상태 표시 */}
-            <Box sx={{ mb: 3 }}>
-              <Stack direction="row" alignItems="center" justifyContent="center" spacing={1} sx={{ mb: 2 }}>
-                <Mic color="action" />
-                <Typography variant="body1" color="text.secondary">
-                  준비
+        {/* 상단 영역: 카메라 + 문장 */}
+        <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+          {/* 웹캠 프리뷰 */}
+          <Card elevation={2} sx={{ flex: 1 }}>
+            <CardContent>
+              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  📹 웹캠
                 </Typography>
+                <Stack direction="row" spacing={0.5}>
+                  <IconButton size="small" onClick={() => setShowGrid((v) => !v)} title="그리드">
+                    <GridOn fontSize="small" color={showGrid ? 'primary' : 'inherit'} />
+                  </IconButton>
+                  <IconButton
+                    size="small"
+                    onClick={() => setShowMouthLandmarks((v) => !v)}
+                    title="입 랜드마크"
+                  >
+                    {showMouthLandmarks ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
+                  </IconButton>
+                </Stack>
               </Stack>
-              
-              <LinearProgress 
-                variant="determinate" 
-                value={progress} 
-                sx={{ 
-                  height: 10, 
-                  borderRadius: 5,
-                  mb: 1,
-                  bgcolor: '#e0e0e0',
-                  '& .MuiLinearProgress-bar': {
-                    background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
-                  }
-                }}
-              />
-              
-              <Typography 
-                variant="body2" 
-                align="center" 
-                sx={{ fontWeight: 600, color: 'primary.main' }}
-              >
-                {progress}%
-              </Typography>
-            </Box>
+              <Box sx={{ position: 'relative', width: '100%', aspectRatio: '4/3', bgcolor: '#000', borderRadius: 2, overflow: 'hidden' }}>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                  }}
+                />
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                  }}
+                />
+              </Box>
+            </CardContent>
+          </Card>
 
-            {/* 컨트롤 버튼 */}
-            <Stack direction="row" spacing={2} justifyContent="center" sx={{ mb: 2 }}>
-              <Button
-                variant="outlined"
-                startIcon={<SkipPrevious />}
-                onClick={handlePrev}
-                disabled={currentIndex === 0}
-              >
-                이전
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<Replay />}
-              >
-                다시 듣기
-              </Button>
-              <Button
-                variant="outlined"
-                endIcon={<SkipNext />}
-                onClick={handleNext}
-                disabled={currentIndex === SAMPLE_SENTENCES.length - 1}
-              >
-                다음
-              </Button>
+          {/* 문장 표시 */}
+          <Card elevation={2} sx={{ flex: 1 }}>
+            <CardContent>
+              <Stack spacing={2}>
+                <Box sx={{ textAlign: 'center' }}>
+                  {sentenceList.length > 0 ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                      문장 {currentIndex + 1} / {sentenceList.length}
+                    </Typography>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                      문장 준비 중
+                    </Typography>
+                  )}
+                  <Typography
+                    variant="h4"
+                    sx={{
+                      fontWeight: 600,
+                      mb: 3,
+                      minHeight: 100,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    {currentSentence?.text || (isSentenceLoading ? '문장 생성 중...' : '문장을 불러오지 못했습니다')}
+                  </Typography>
+
+                  {/* 컨트롤 버튼 */}
+                  <Stack direction="row" spacing={2} justifyContent="center" sx={{ mb: 2 }}>
+                    <Button
+                      variant="outlined"
+                      startIcon={<SkipPrevious />}
+                      onClick={handlePrev}
+                      disabled={currentIndex === 0 || isRecording}
+                    >
+                      이전
+                    </Button>
+                    <Button
+                      variant="contained"
+                      startIcon={<VolumeUp />}
+                      onClick={handlePlaySentence}
+                      disabled={isSpeaking || !currentSentence}
+                      sx={{
+                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                      }}
+                    >
+                      {isSpeaking ? '재생 중...' : '듣기'}
+                    </Button>
+                    <Button
+                      variant={isRecording ? 'contained' : 'outlined'}
+                      color={isRecording ? 'error' : 'primary'}
+                      startIcon={isRecording ? <MicOff /> : <Mic />}
+                      onClick={toggleRecording}
+                      disabled={!currentSentence}
+                    >
+                      {isRecording ? `중지 (${Math.floor((MAX_RECORDING_DURATION - recordingDuration) / 1000)}초)` : '녹음'}
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      startIcon={<SkipNext />}
+                      onClick={handleNext}
+                      disabled={currentIndex >= sentenceList.length - 1 || isRecording || !canGoNext}
+                    >
+                      다음
+                    </Button>
+                  </Stack>
+
+                  {/* STT 처리 중 */}
+                  {isTranscribing && (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <CircularProgress size={24} />
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                        음성 인식 중...
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* 발음 평가 결과 */}
+                  {isEvaluating && (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <CircularProgress size={24} />
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                        발음 평가 중...
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {evaluationResult && !isEvaluating && (
+                    <Alert severity={evaluationResult.overallScore >= 80 ? 'success' : evaluationResult.overallScore >= 60 ? 'info' : 'warning'} sx={{ textAlign: 'left' }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                        발음 점수: {evaluationResult.overallScore}점 | 정확도: {evaluationResult.wordAccuracy}%
+                      </Typography>
+                      {evaluationResult.missedWords && evaluationResult.missedWords.length > 0 && (
+                        <Typography variant="caption" color="error.main" sx={{ display: 'block' }}>
+                          놓친 단어: {evaluationResult.missedWords.join(', ')}
+                        </Typography>
+                      )}
+                      {evaluationResult.extraWords && evaluationResult.extraWords.length > 0 && (
+                        <Typography variant="caption" color="warning.main" sx={{ display: 'block' }}>
+                          추가된 단어: {evaluationResult.extraWords.join(', ')}
+                        </Typography>
+                      )}
+                      <Typography variant="caption" sx={{ display: 'block', mt: 0.5 }}>
+                        {evaluationResult.feedback}
+                      </Typography>
+                    </Alert>
+                  )}
+                </Box>
+
+                {/* 난이도 표시 */}
+                <Box sx={{ textAlign: 'center' }}>
+                  <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap">
+                    <Chip label={`주제: ${topic?.title || topicId}`} color="secondary" size="small" />
+                    <Chip label={`난이도: ${difficulty}`} color="primary" size="small" />
+                  </Stack>
+                </Box>
+
+                {/* STT 결과 (주제/난이도 아래) */}
+                {transcript && !isTranscribing && (
+                  <Box sx={{ mt: 1.5, p: 2, bgcolor: 'primary.50', border: 1, borderColor: 'primary.200', borderRadius: 2 }}>
+                    <Typography variant="subtitle2" color="primary.main" sx={{ fontWeight: 600, mb: 1 }}>
+                      🎤 인식된 텍스트
+                    </Typography>
+                    <Typography variant="body1" sx={{ fontStyle: 'italic', color: 'text.primary', fontWeight: 500 }}>
+                      "{transcript}"
+                    </Typography>
+                  </Box>
+                )}
+              </Stack>
+            </CardContent>
+          </Card>
+        </Stack>
+
+        {/* 중단 영역: 발화 상태 */}
+        <Card elevation={2} sx={{ mb: 3 }}>
+          <CardContent>
+            <Stack spacing={2}>
+              {/* 발화 표시기 */}
+              <Box sx={{ textAlign: 'center' }}>
+                <Chip
+                  icon={currentlySpeaking ? <Mic /> : <MicOff />}
+                  label={currentlySpeaking ? '🎤 발음 중...' : '준비'}
+                  color={currentlySpeaking ? 'success' : 'default'}
+                  sx={{ fontSize: '1rem', py: 2, px: 1 }}
+                />
+              </Box>
+
+              {/* 시간 표시 */}
+              <Stack direction="row" spacing={4} justifyContent="center">
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                    {formatTime(speakingTime)}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    발음 시간
+                  </Typography>
+                </Box>
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                    {formatTime(totalTime)}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    전체 시간
+                  </Typography>
+                </Box>
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                    {ratio}%
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    발음 비율
+                  </Typography>
+                </Box>
+              </Stack>
+
+              {/* 프로그레스 바 */}
+              <Box>
+                <LinearProgress
+                  variant="determinate"
+                  value={ratio}
+                  sx={{
+                    height: 10,
+                    borderRadius: 5,
+                    bgcolor: '#e0e0e0',
+                    '& .MuiLinearProgress-bar': {
+                      background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
+                    },
+                  }}
+                />
+              </Box>
             </Stack>
-
-            {/* 문장 카운터 */}
-            <Typography variant="body2" align="center" color="text.secondary">
-              {currentIndex + 1} / {SAMPLE_SENTENCES.length}
-            </Typography>
           </CardContent>
         </Card>
+
+        {/* 통계 카드 */}
+        <Card elevation={2} sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+              📊 통계
+            </Typography>
+            <Stack spacing={2}>
+              {/* Pace Ratio */}
+              <Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  속도 비율 (Pace Ratio)
+                </Typography>
+                <Stack direction="row" spacing={2}>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                      {currentPaceRatio ? currentPaceRatio.toFixed(2) : '-'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      현재
+                    </Typography>
+                  </Box>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                      {avgPaceRatio ? avgPaceRatio.toFixed(2) : '-'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      평균
+                    </Typography>
+                  </Box>
+                </Stack>
+                {currentPaceRatio && (
+                  <Chip
+                    label={getPaceRatioFeedback(currentPaceRatio).message}
+                    size="small"
+                    sx={{
+                      mt: 1,
+                      bgcolor: getPaceRatioFeedback(currentPaceRatio).color + '.100',
+                      color: getPaceRatioFeedback(currentPaceRatio).color + '.800',
+                    }}
+                  />
+                )}
+              </Box>
+
+              {/* Net Speaking Density */}
+              <Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  발화 밀도 (Net Speaking Density)
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                  {netDensity.toFixed(1)}%
+                </Typography>
+                <Chip
+                  label={getNetSpeakingDensityFeedback(netDensity).message}
+                  size="small"
+                  sx={{
+                    mt: 1,
+                    bgcolor: getNetSpeakingDensityFeedback(netDensity).color + '.100',
+                    color: getNetSpeakingDensityFeedback(netDensity).color + '.800',
+                  }}
+                />
+              </Box>
+            </Stack>
+          </CardContent>
+        </Card>
+
       </Box>
 
       <Snackbar
