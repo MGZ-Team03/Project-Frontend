@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import {useState, useRef, useEffect, useCallback} from 'react';
+import { useLocation, useNavigate} from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
@@ -41,6 +41,9 @@ import { startAiChat, sendAiChatMessage } from '../../api/aiChat';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
 
+
+import {useSelector} from "react-redux";
+import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 // Data
 import { scenarios, getScenarioById } from '../../data/conversation/scenarios';
 
@@ -130,6 +133,31 @@ export default function ChatPage() {
     error: whisperError,
     progress: whisperProgress,
   } = useWhisperSTT();
+
+  const user = useSelector(state => state.auth.user);
+
+  const getData = useCallback(() => {
+    console.log("websocket 실행!!");
+
+    if(!user?.email) {
+      console.log("❌ 사용자 정보 없음");
+      return null;
+    }
+
+    return {
+      action: "status",
+      data:{
+        tutorEmail: user.tutorEmail || "unknown@example.com",
+        studentEmail: user.email,
+        status: "active",
+        room: "ai",
+        assignedAt: new Date().toISOString().split("T")[0],
+      }
+    };
+  }, [user?.email]); // ← tutorEmail도 추가!
+
+// ✅ 함수 자체를 전달 (실행하지 않음!)
+  const socket = useWebSocket(getData);
 
   // Hooks - Server TTS
   const { playText, stop: stopTTS, isPlaying: isSpeaking } = useTTSAudio();

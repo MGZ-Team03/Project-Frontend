@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import {useState, useRef, useEffect, useMemo, useCallback} from 'react';
+import {redirect, useLocation, useNavigate} from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
@@ -42,6 +42,10 @@ import { evaluatePronunciation } from '../../api/stt';
 import { validateSentence } from '../../utils/conversation/sentenceValidator';
 import { getScenarioById } from '../../data/conversation/scenarios';
 
+import ws from "../../config/webSocketConfig.js";
+import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
+import {useSelector} from "react-redux";
+
 // Redux
 import {
   startSession,
@@ -64,6 +68,31 @@ const sentenceBatchCache = new Map(); // key -> { sentences: {id,text}[], savedA
 const sentenceBatchFailAt = new Map(); // key -> lastFailedAt(ms)
 
 export default function PracticePage() {
+  const user = useSelector(state => state.auth.user);
+
+  const getData = useCallback(() => {
+    console.log("websocket 실행!!");
+
+    if(!user?.email) {
+      console.log("❌ 사용자 정보 없음");
+      return null;
+    }
+
+    return {
+      action: "status",
+      data:{
+        tutorEmail: user.tutorEmail || "unknown@example.com",
+        studentEmail: user.email,
+        status: "active",
+        room: "sentence",
+        assignedAt: new Date().toISOString().split("T")[0],
+      }
+    };
+  }, [user?.email]); // ← tutorEmail도 추가!
+
+// ✅ 함수 자체를 전달 (실행하지 않음!)
+  const socket = useWebSocket(getData);
+
   const location = useLocation();
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -289,6 +318,8 @@ export default function PracticePage() {
       }
     };
   }, []);
+
+
 
   // Validate when transcript changes
   useEffect(() => {
