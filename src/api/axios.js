@@ -25,6 +25,7 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // 401 에러 시 자동 로그아웃 및 로그인 페이지 이동
     if (error.response?.status === 401) {
       localStorage.removeItem('idToken');
       localStorage.removeItem('user');
