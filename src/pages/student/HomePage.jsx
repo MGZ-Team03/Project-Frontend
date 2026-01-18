@@ -39,19 +39,30 @@ export default function HomePage() {
 
   // 웹소켓 연결만 수행 (데이터 전송 없음)
   const getData = useCallback(() => {
-    console.log("HomePage: 웹소켓 연결 준비");
+    console.log("HomePage: no room 상태 전송");
 
     if(!user?.email) {
       console.log("❌ 사용자 정보 없음");
       return null;
     }
-    return null;
+    return {
+      action: "status",
+      data: {
+        tutorEmail: user.tutorEmail || "unknown@example.com",
+        studentEmail: user.email,
+        status: "active",
+        room: "no room",  // 홈은 "no room"
+        assignedAt: new Date().toISOString().split("T")[0],
+      }
+    };
   },[user?.email]);
 
   const socket = useWebSocket(getData, {
-    sendImmediately: false,  // 즉시 전송 비활성화
-    enableInterval: false     // 주기 전송 비활성화
+    sendImmediately: true,
+    enableInterval: true,
+    interval: 5000
   });
+
 
   // TODO: 실제 데이터는 Redux나 API에서 가져오기
   const todayStats = {

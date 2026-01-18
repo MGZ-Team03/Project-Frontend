@@ -70,7 +70,7 @@ export default function PracticePage() {
   const user = useSelector(state => state.auth.user);
 
   const getData = useCallback(() => {
-    console.log("websocket 실행!!");
+    console.log("PracticePage: sentence room 상태 전송");
 
     if(!user?.email) {
       console.log("❌ 사용자 정보 없음");
@@ -82,6 +82,7 @@ export default function PracticePage() {
       data:{
         tutorEmail: user.tutorEmail || "unknown@example.com",
         studentEmail: user.email,
+        status: "active",
         room: "sentence",
         assignedAt: new Date().toISOString().split("T")[0],
       }

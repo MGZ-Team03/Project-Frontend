@@ -146,10 +146,11 @@ export default function ChatPage() {
 
     return {
       action: "status",
-      data:{
+      data: {
         tutorEmail: user.tutorEmail || "unknown@example.com",
         studentEmail: user.email,
-        room: "ai",
+        status: "active",
+        room: "ai",  // 대화는 "ai"
         assignedAt: new Date().toISOString().split("T")[0],
       }
     };

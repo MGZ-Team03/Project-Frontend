@@ -1,4 +1,5 @@
 import axios from './axios';
+import ws from "../config/webSocketConfig.js";
 
 // 회원가입
 export const register = async (email, password, name, role = 'student') => {
@@ -41,6 +42,7 @@ export const login = async (email, password) => {
 
 // 로그아웃
 export const logout = () => {
+  ws.disconnect();
   localStorage.removeItem('idToken');
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
