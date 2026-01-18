@@ -44,7 +44,6 @@ import { getScenarioById } from '../../data/conversation/scenarios';
 
 import ws from "../../config/webSocketConfig.js";
 import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
-import {useSelector} from "react-redux";
 
 // Redux
 import {

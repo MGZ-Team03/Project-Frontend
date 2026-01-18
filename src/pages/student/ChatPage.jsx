@@ -42,7 +42,7 @@ import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
 
 
-import {useSelector} from "react-redux";
+
 import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 // Data
 import { scenarios, getScenarioById } from '../../data/conversation/scenarios';
