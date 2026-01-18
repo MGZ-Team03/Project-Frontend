@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import {
   Box,
   Typography,
@@ -23,6 +24,8 @@ import {
   TableHead,
   TableRow,
   Paper,
+  Alert,
+  Snackbar,
 } from '@mui/material';
 import {
   ArrowBack,
@@ -33,6 +36,8 @@ import {
   Chat,
 } from '@mui/icons-material';
 import TutorLayout from '../../components/common/TutorLayout';
+import { sendFeedback } from '../../api/tutorFeedback';
+import { requestTTS } from '../../api/tts';
 
 // 목업 학생 상세 데이터
 const MOCK_STUDENT = {
@@ -63,22 +68,67 @@ const MOCK_FEEDBACK = [
 export default function StudentDetailPage() {
   const { email } = useParams();
   const navigate = useNavigate();
+  const tutorEmail = useSelector(state => state.auth.user?.email);
+  
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackHistory, setFeedbackHistory] = useState(MOCK_FEEDBACK);
+  const [sending, setSending] = useState(false);
+  const [notification, setNotification] = useState(null);
 
   const student = MOCK_STUDENT; // 실제로는 email로 조회
 
-  const handleSendFeedback = (type) => {
+  const handleSendFeedback = async (type) => {
     if (!feedbackText.trim()) return;
 
-    const newFeedback = {
-      time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-      type,
-      message: feedbackText,
-    };
+    setSending(true);
+    try {
+      let audioUrl = null;
 
-    setFeedbackHistory([newFeedback, ...feedbackHistory]);
-    setFeedbackText('');
+      // TTS 타입이면 먼저 TTS URL 생성
+      if (type === 'tts') {
+        console.log('🔊 TTS URL 생성 중...');
+        const ttsResult = await requestTTS({ text: feedbackText });
+        audioUrl = ttsResult?.audioUrl;
+        
+        if (!audioUrl) {
+          throw new Error('TTS URL 생성 실패');
+        }
+        console.log('✅ TTS URL 생성 완료:', audioUrl);
+      }
+
+      const result = await sendFeedback({
+        tutor_email: tutorEmail,
+        student_email: student.email,
+        message: feedbackText,
+        message_type: type === 'tts' ? 'tts' : 'text',
+        audio_url: audioUrl,
+        session_id: 'default'
+      });
+
+      console.log('✅ 피드백 전송 결과:', result);
+
+      // 피드백 히스토리에 추가
+      const newFeedback = {
+        time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+        type,
+        message: feedbackText,
+      };
+      setFeedbackHistory([newFeedback, ...feedbackHistory]);
+      setFeedbackText('');
+
+      setNotification({
+        message: `피드백 전송 성공! ${result.websocket_sent ? '(실시간 전달됨)' : '(오프라인)'}`,
+        severity: 'success',
+      });
+    } catch (error) {
+      console.error('피드백 전송 실패:', error);
+      setNotification({
+        message: '피드백 전송에 실패했습니다.',
+        severity: 'error',
+      });
+    } finally {
+      setSending(false);
+    }
   };
 
   const weeklyTotal = MOCK_HISTORY.reduce((sum, d) => sum + d.duration, 0);
@@ -193,17 +243,17 @@ export default function StudentDetailPage() {
                     variant="contained"
                     startIcon={<Send />}
                     onClick={() => handleSendFeedback('text')}
-                    disabled={!feedbackText.trim()}
+                    disabled={!feedbackText.trim() || sending}
                   >
-                    텍스트 전송
+                    {sending ? '전송 중...' : '텍스트 전송'}
                   </Button>
                   <Button
                     variant="outlined"
                     startIcon={<VolumeUp />}
                     onClick={() => handleSendFeedback('tts')}
-                    disabled={!feedbackText.trim()}
+                    disabled={!feedbackText.trim() || sending}
                   >
-                    TTS 전송
+                    {sending ? '전송 중...' : 'TTS 전송'}
                   </Button>
                 </Stack>
 
@@ -304,6 +354,21 @@ export default function StudentDetailPage() {
             </Card>
           </Grid>
         </Grid>
+
+        {/* 알림 스낵바 */}
+        <Snackbar
+          open={!!notification}
+          autoHideDuration={4000}
+          onClose={() => setNotification(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert 
+            onClose={() => setNotification(null)} 
+            severity={notification?.severity || 'info'}
+          >
+            {notification?.message}
+          </Alert>
+        </Snackbar>
       </Box>
     </TutorLayout>
   );

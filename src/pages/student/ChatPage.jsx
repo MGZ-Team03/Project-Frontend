@@ -41,6 +41,7 @@ import {
 import StudentLayout from '../../components/common/StudentLayout';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { getFeedbackHistory } from '../../api/tutorFeedback';
+import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
 
 // Hooks
 import { useMediaPipe } from '../../hooks/conversation/useMediaPipe';
@@ -120,7 +121,12 @@ export default function ChatPage() {
   const [isChatInitLoading, setIsChatInitLoading] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sttError, setSttError] = useState(null);
-
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'info' // 'success' | 'error' | 'warning' | 'info'
+  });
+  
   // Hooks - MediaPipe & Audio
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
     videoRef,
@@ -233,10 +239,10 @@ export default function ChatPage() {
 
   // Send initial message when scenario changes (prevent double call in StrictMode)
   useEffect(() => {
-    if (!initialMessageSentRef.current) {
-      initialMessageSentRef.current = true;
-      sendInitialMessage();
-    }
+    // if (!initialMessageSentRef.current) {
+    //   initialMessageSentRef.current = true;
+    //   sendInitialMessage();
+    // }
 
     return () => {
       // Cleanup: reset ref when component unmounts
@@ -250,42 +256,42 @@ export default function ChatPage() {
   }, [messages]);
 
   // Initial AI message
-  const sendInitialMessage = async () => {
-    try {
-      setAiError(null);
-      setIsChatInitLoading(true);
-      setMessages([]);
-      setRevealedMessages(new Set());
-      conversationIdRef.current = null;
+  // const sendInitialMessage = async () => {
+  //   try {
+  //     setAiError(null);
+  //     setIsChatInitLoading(true);
+  //     setMessages([]);
+  //     setRevealedMessages(new Set());
+  //     conversationIdRef.current = null;
 
-      const startRes = await startAiChat({
-        topic: toApiTopic(currentScenario),
-        difficulty: toApiDifficulty(difficulty),
-      });
-      console.log('Start chat response:', startRes);
-      const conversationId = startRes?.conversationId;
-      if (!conversationId) throw new Error('conversationId가 없습니다.');
-      conversationIdRef.current = conversationId;
-      console.log('ConversationId set:', conversationId);
+  //     const startRes = await startAiChat({
+  //       topic: toApiTopic(currentScenario),
+  //       difficulty: toApiDifficulty(difficulty),
+  //     });
+  //     console.log('Start chat response:', startRes);
+  //     const conversationId = startRes?.conversationId;
+  //     if (!conversationId) throw new Error('conversationId가 없습니다.');
+  //     conversationIdRef.current = conversationId;
+  //     console.log('ConversationId set:', conversationId);
 
-      const initialAssistant =
-        startRes?.aiMessage || startRes?.assistantMessage || startRes?.message || startRes?.content || null;
+  //     const initialAssistant =
+  //       startRes?.aiMessage || startRes?.assistantMessage || startRes?.message || startRes?.content || null;
 
-      if (initialAssistant) {
-        setMessages([
-          { role: 'assistant', content: initialAssistant, streaming: false, timestamp: new Date() },
-        ]);
-        lastAutoSpokenRef.current = null;
-        await playText(initialAssistant);
-      }
-    } catch (error) {
-      console.error('Initial message error:', error);
-      setAiError(error);
-    }
-    finally {
-      setIsChatInitLoading(false);
-    }
-  };
+  //     if (initialAssistant) {
+  //       setMessages([
+  //         { role: 'assistant', content: initialAssistant, streaming: false, timestamp: new Date() },
+  //       ]);
+  //       lastAutoSpokenRef.current = null;
+  //       await playText(initialAssistant);
+  //     }
+  //   } catch (error) {
+  //     console.error('Initial message error:', error);
+  //     setAiError(error);
+  //   }
+  //   finally {
+  //     setIsChatInitLoading(false);
+  //   }
+  // };
 
   // Mic toggle handler
   const handleMicToggle = async () => {
@@ -906,6 +912,9 @@ export default function ChatPage() {
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+      {/* 튜터 피드백 오버레이 - 독립적 컴포넌트 */}
+      <TutorFeedbackOverlay />
     </StudentLayout>
   );
 }
