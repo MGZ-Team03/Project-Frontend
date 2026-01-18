@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import {useCallback, useState} from 'react';
 import {
   Box,
   Card,
@@ -25,13 +25,33 @@ import {
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
 import { scenarios } from '../../data/conversation/scenarios';
+import {useSelector} from "react-redux";
+import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 
 export default function HomePage() {
+  const user = useSelector(state => state.auth.user);
   const navigate = useNavigate();
   const [practiceDifficulty, setPracticeDifficulty] = useState('중');
   const [practiceTopicId, setPracticeTopicId] = useState('restaurant');
   const [chatDifficulty, setChatDifficulty] = useState('중');
   const [chatScenario, setChatScenario] = useState('restaurant');
+
+
+  // 웹소켓 연결만 수행 (데이터 전송 없음)
+  const getData = useCallback(() => {
+    console.log("HomePage: 웹소켓 연결 준비");
+
+    if(!user?.email) {
+      console.log("❌ 사용자 정보 없음");
+      return null;
+    }
+    return null;
+  },[user?.email]);
+
+  const socket = useWebSocket(getData, {
+    sendImmediately: false,  // 즉시 전송 비활성화
+    enableInterval: false     // 주기 전송 비활성화
+  });
 
   // TODO: 실제 데이터는 Redux나 API에서 가져오기
   const todayStats = {

@@ -149,15 +149,19 @@ export default function ChatPage() {
       data:{
         tutorEmail: user.tutorEmail || "unknown@example.com",
         studentEmail: user.email,
-        status: "active",
         room: "ai",
         assignedAt: new Date().toISOString().split("T")[0],
       }
     };
   }, [user?.email]); // ← tutorEmail도 추가!
 
-// ✅ 함수 자체를 전달 (실행하지 않음!)
-  const socket = useWebSocket(getData);
+
+  // 페이지 진입 시 즉시 전송 + 5초마다 전송
+  const socket = useWebSocket(getData, {
+    sendImmediately: true,
+    enableInterval: true,
+    interval: 5000
+  });
 
   // Hooks - Server TTS
   const { playText, stop: stopTTS, isPlaying: isSpeaking } = useTTSAudio();
