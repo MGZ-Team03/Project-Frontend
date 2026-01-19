@@ -163,16 +163,23 @@ export default function ChatPage() {
 
     return {
       action: "status",
-      data:{
+      data: {
         tutorEmail: user.tutorEmail || "unknown@example.com",
         studentEmail: user.email,
         status: "active",
-        room: "ai",
+        room: "ai",  // 대화는 "ai"
         assignedAt: new Date().toISOString().split("T")[0],
       }
     };
   }, [user?.email, user?.tutorEmail]);
 
+
+  // 페이지 진입 시 즉시 전송 + 5초마다 전송
+  const socket = useWebSocket(getData, {
+    sendImmediately: true,
+    enableInterval: true,
+    interval: 5000
+  });
 // ✅ 함수 자체를 전달 (실행하지 않음!)
   useWebSocket(getData);
 

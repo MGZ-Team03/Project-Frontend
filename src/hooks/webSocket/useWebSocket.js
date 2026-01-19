@@ -1,7 +1,14 @@
 import { useEffect, useRef } from "react";
 import ws from "../../config/webSocketConfig.js";
 
-export default function useWebSocket(getData, interval = 5000) {
+export default function useWebSocket(getData, options={}) {
+
+    const {
+        interval = 5000,
+        sendImmediately = true,  // 즉시 전송 여부
+        enableInterval = true     // 주기적 전송 여부
+    } = options;
+
     const getDataRef = useRef(getData);
 
     // getData가 바뀔 때마다 ref 업데이트
@@ -17,15 +24,21 @@ export default function useWebSocket(getData, interval = 5000) {
         const handleOpen = () => {
             console.log("✅ WebSocket 열림");
 
-            // 즉시 한 번 전송
-            const data = getDataRef.current();
-            if (data) {
-                socket.send(JSON.stringify(data));
-                console.log("📤 초기 전송:", data);
+            // 즉시 전송 옵션이 켜져있을 때만 전송
+            if (sendImmediately) {
+                const data = getDataRef.current();
+                if (data) {
+                    socket.send(JSON.stringify(data));
+                    console.log("📤 초기 전송:", data);
+                } else {
+                    console.log("⏭️ 초기 전송 생략 (getData가 null 반환)");
+                }
             }
 
-            // 주기적 전송 시작
-            ws.startSendingData(interval, () => getDataRef.current());
+            // 주기적 전송 옵션이 켜져있을 때만 시작
+            if (enableInterval) {
+                ws.startSendingData(interval, () => getDataRef.current());
+            }
         };
 
         // 이미 열려있으면 즉시 실행
@@ -36,13 +49,15 @@ export default function useWebSocket(getData, interval = 5000) {
             socket.addEventListener('open', handleOpen);
         }
 
-        return () => {
+       return () => {
             console.log("👋 WebSocket cleanup");
             socket.removeEventListener('open', handleOpen);
-            ws.stopSendingData();
-            ws.disconnect();
+            if (enableInterval) {
+                ws.stopSendingData();
+            }
+            // 주의: disconnect()는 다른 컴포넌트에서도 사용 중일 수 있으므로 호출 안함
         };
-    }, []); // 빈 배열 - 마운트 시 한 번만
+    }, [interval, sendImmediately, enableInterval]);
 
     return ws.getSocket();
 }

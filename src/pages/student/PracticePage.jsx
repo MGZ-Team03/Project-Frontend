@@ -71,7 +71,7 @@ export default function PracticePage() {
   const user = useSelector(state => state.auth.user);
 
   const getData = useCallback(() => {
-    console.log("websocket 실행!!");
+    console.log("PracticePage: sentence room 상태 전송");
 
     if(!user?.email) {
       console.log("❌ 사용자 정보 없음");
@@ -90,8 +90,12 @@ export default function PracticePage() {
     };
   }, [user?.email]); // ← tutorEmail도 추가!
 
-// ✅ 함수 자체를 전달 (실행하지 않음!)
-  const socket = useWebSocket(getData);
+  // 페이지 진입 시 즉시 전송 + 5초마다 전송
+  const socket = useWebSocket(getData, {
+    sendImmediately: true,   // 즉시 전송 활성화
+    enableInterval: true,     // 주기 전송 활성화
+    interval: 5000            // 5초 간격
+  });
 
   const location = useLocation();
   const navigate = useNavigate();

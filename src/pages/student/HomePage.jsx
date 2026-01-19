@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import {useCallback, useState} from 'react';
 import { useSelector } from 'react-redux';
 import {
   Box,
@@ -26,15 +26,46 @@ import {
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
 import { scenarios } from '../../data/conversation/scenarios';
+import {useSelector} from "react-redux";
+import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
 
 export default function HomePage() {
+  const user = useSelector(state => state.auth.user);
   const navigate = useNavigate();
   const whisperStatus = useSelector(selectWhisperPreloadStatus);
   const [practiceDifficulty, setPracticeDifficulty] = useState('중');
   const [practiceTopicId, setPracticeTopicId] = useState('small_talk');
   const [chatDifficulty, setChatDifficulty] = useState('중');
   const [chatScenario, setChatScenario] = useState('small_talk');
+
+
+  // 웹소켓 연결만 수행 (데이터 전송 없음)
+  const getData = useCallback(() => {
+    console.log("HomePage: no room 상태 전송");
+
+    if(!user?.email) {
+      console.log("❌ 사용자 정보 없음");
+      return null;
+    }
+    return {
+      action: "status",
+      data: {
+        tutorEmail: user.tutorEmail || "unknown@example.com",
+        studentEmail: user.email,
+        status: "active",
+        room: "no room",  // 홈은 "no room"
+        assignedAt: new Date().toISOString().split("T")[0],
+      }
+    };
+  },[user?.email]);
+
+  const socket = useWebSocket(getData, {
+    sendImmediately: true,
+    enableInterval: true,
+    interval: 5000
+  });
+
 
   // TODO: 실제 데이터는 Redux나 API에서 가져오기
   const todayStats = {
