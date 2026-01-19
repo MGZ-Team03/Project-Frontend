@@ -117,13 +117,13 @@ export function getSpeakingState(landmarks, audioVolume) {
   const hasAudio = audioVolume > dynamicThreshold;
 
   // 디버깅용 로그 (개발 중에만 사용)
-  if (import.meta.env.DEV) {
-    if (mouthActive || hasAudio || audioVolume > 1) {
-      console.log(
-        `[Speaking Detector] MAR: ${mar.toFixed(3)}, MARstd: ${marStd.toFixed(4)}, MouthOpen: ${mouthOpen}, MouthMove: ${mouthMoving}, Vol: ${audioVolume.toFixed(1)}, NoiseFloor: ${noiseFloor.toFixed(1)}, Thr: ${dynamicThreshold.toFixed(1)}, Speaking: ${(mouthActive && hasAudio)}`
-      );
-    }
-  }
+  // if (import.meta.env.DEV) {
+  //   if (mouthActive || hasAudio || audioVolume > 1) {
+  //     console.log(
+  //       `[Speaking Detector] MAR: ${mar.toFixed(3)}, MARstd: ${marStd.toFixed(4)}, MouthOpen: ${mouthOpen}, MouthMove: ${mouthMoving}, Vol: ${audioVolume.toFixed(1)}, NoiseFloor: ${noiseFloor.toFixed(1)}, Thr: ${dynamicThreshold.toFixed(1)}, Speaking: ${(mouthActive && hasAudio)}`
+  //     );
+  //   }
+  // }
 
   return {
     isSpeaking: mouthActive && hasAudio,
