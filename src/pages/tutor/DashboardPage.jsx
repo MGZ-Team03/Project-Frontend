@@ -34,6 +34,8 @@ import {
   Send,
 } from '@mui/icons-material';
 import TutorLayout from '../../components/common/TutorLayout';
+import FeedbackNotification from '../../components/tutor/FeedbackNotification';
+import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
 import { sendFeedback } from '../../api/tutorFeedback';
 
 // 목업 학생 데이터
@@ -67,7 +69,7 @@ function getStatusLabel(status) {
   }
 }
 
-function StudentCard({ student, onClick, onFeedbackClick, onQuickFeedback, disabled }) {
+function StudentCard({ student, onClick, onFeedbackClick, tutorEmail, disabled, onQuickFeedbackSuccess, onQuickFeedbackError }) {
   const statusColor = getStatusColor(student.status);
 
   return (
@@ -184,30 +186,14 @@ function StudentCard({ student, onClick, onFeedbackClick, onQuickFeedback, disab
           />
         )}
 
-        {/* 빠른 피드백 버튼 */}
-        <Box display="flex" gap={0.5} mt={2} flexWrap="wrap">
-          <Chip
-            label="👍 잘하고 있어요!"
-            size="small"
-            onClick={(e) => onQuickFeedback(student, '발음이 좋아졌어요! 계속 연습하세요.', e)}
-            disabled={disabled}
-            sx={{ cursor: 'pointer' }}
-          />
-          <Chip
-            label="💪 힘내세요!"
-            size="small"
-            onClick={(e) => onQuickFeedback(student, '좀 더 천천히 발음해보세요.', e)}
-            disabled={disabled}
-            sx={{ cursor: 'pointer' }}
-          />
-          <Chip
-            label="🔊 크게 말해요"
-            size="small"
-            onClick={(e) => onQuickFeedback(student, '좀 더 크게 말씀해주세요.', e)}
-            disabled={disabled}
-            sx={{ cursor: 'pointer' }}
-          />
-        </Box>
+        {/* 빠른 피드백 */}
+        <QuickFeedbackChips
+          student={student}
+          tutorEmail={tutorEmail}
+          disabled={disabled}
+          onSuccess={onQuickFeedbackSuccess}
+          onError={onQuickFeedbackError}
+        />
       </CardContent>
     </Card>
   );
@@ -245,6 +231,15 @@ export default function DashboardPage() {
     setSelectedStudent(student);
     setFeedbackText('');
     setFeedbackDialog(true);
+  };
+
+  // 빠른 피드백 성공/실패 핸들러
+  const handleQuickFeedbackSuccess = (message) => {
+    setNotification({ message, severity: 'success' });
+  };
+
+  const handleQuickFeedbackError = (message) => {
+    setNotification({ message, severity: 'error' });
   };
 
   // 피드백 전송
@@ -285,33 +280,7 @@ export default function DashboardPage() {
     }
   };
 
-  // 빠른 피드백 전송 (미리 정의된 메시지)
-  const sendQuickFeedback = async (student, message, event) => {
-    event?.stopPropagation();
-    setSending(true);
-    try {
-      const sessionId = generateSessionId(student.email);
-      const result = await sendFeedback({
-        tutor_email: tutorEmail,
-        student_email: student.email,
-        message: message,
-        message_type: 'text',
-        session_id: sessionId
-      });
 
-      setNotification({
-        message: `빠른 피드백 전송 완료! ${result.websocket_sent ? '(실시간)' : '(오프라인)'}`,
-        severity: 'success',
-      });
-    } catch (error) {
-      setNotification({
-        message: '피드백 전송 실패',
-        severity: 'error',
-      });
-    } finally {
-      setSending(false);
-    }
-  };
 
   return (
     <TutorLayout studentCount={students.length}>
@@ -384,8 +353,10 @@ export default function DashboardPage() {
               student={student}
               onClick={handleStudentClick}
               onFeedbackClick={openFeedbackDialog}
-              onQuickFeedback={sendQuickFeedback}
+              tutorEmail={tutorEmail}
               disabled={sending}
+              onQuickFeedbackSuccess={handleQuickFeedbackSuccess}
+              onQuickFeedbackError={handleQuickFeedbackError}
             />
           ))}
         </Stack>
@@ -431,20 +402,11 @@ export default function DashboardPage() {
           </DialogActions>
         </Dialog>
 
-        {/* 알림 스낵바 */}
-        <Snackbar
-          open={!!notification}
-          autoHideDuration={4000}
+        {/* 알림 */}
+        <FeedbackNotification
+          notification={notification}
           onClose={() => setNotification(null)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-        >
-          <Alert 
-            onClose={() => setNotification(null)} 
-            severity={notification?.severity || 'info'}
-          >
-            {notification?.message}
-          </Alert>
-        </Snackbar>
+        />
       </Box>
     </TutorLayout>
   );

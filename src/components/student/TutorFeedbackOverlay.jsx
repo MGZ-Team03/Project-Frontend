@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import {
   Box,
@@ -19,6 +19,9 @@ import {
   Notifications,
   Close,
   CheckCircle,
+  NotificationsOff,
+  OpenInFull,
+  VolumeOff,
 } from '@mui/icons-material';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
@@ -35,6 +38,12 @@ export default function TutorFeedbackOverlay() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const { playText } = useTTSAudio();
+  const panelRef = useRef(null);
+
+  // 학생 제어 옵션
+  const [doNotDisturb, setDoNotDisturb] = useState(false);   // 방해금지 모드
+  const [autoExpand, setAutoExpand] = useState(true);         // 자동 패널 확장
+  const [autoPlayTTS, setAutoPlayTTS] = useState(false);     // TTS 자동재생
 
   // WebSocket 메시지 핸들러
   const handleWebSocketMessage = (message) => {
@@ -53,13 +62,25 @@ export default function TutorFeedbackOverlay() {
         isRead: false,
       };
       
+      // 피드백 저장 및 카운트 증가 (항상 실행)
       setFeedbacks((prev) => {
         const updated = [newFeedback, ...prev].slice(0, 20);
         return updated;
       });
       setUnreadCount((prev) => prev + 1);
-      setIsExpanded(true); // 자동 확장
+      
+      // 방해금지 모드일 때는 알림/확장/재생 모두 스킵
+      if (doNotDisturb) {
+        console.log('🌙 방해금지 모드: 피드백 조용히 저장됨');
+        return;
+      }
+      
+      // 자동 패널 확장 (설정에 따라)
+      if (autoExpand) {
+        setIsExpanded(true);
+      }
             
+      // 브라우저 알림 (방해금지 모드 아닐 때만)
       if ('Notification' in window) {
         if (Notification.permission === 'granted') {
           try {
@@ -81,8 +102,8 @@ export default function TutorFeedbackOverlay() {
         console.error('❌ 브라우저가 Notification API를 지원하지 않습니다');
       }
       
-      // TTS 자동 재생 (messageType이 'tts'인 경우)
-      if (message.messageType === 'tts' && message.message) {
+      // TTS 자동 재생 (설정에 따라)
+      if (autoPlayTTS && message.messageType === 'tts' && message.message) {
         playText(message.message);
       }
     } else {
@@ -97,6 +118,7 @@ export default function TutorFeedbackOverlay() {
   // WebSocket 연결
   const { isConnected, error: wsError } = useWebSocket(
     user?.email,
+    null, // tutorEmail (학생은 null)
     handleWebSocketMessage
   );
 
@@ -117,6 +139,25 @@ export default function TutorFeedbackOverlay() {
       console.error('❌ 이 브라우저는 Notification API를 지원하지 않습니다.');
     }
   }, []);
+
+  // 패널 외부 클릭 시 닫기
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (isExpanded && panelRef.current && !panelRef.current.contains(event.target)) {
+        // FAB 버튼 클릭은 제외
+        const fab = event.target.closest('[data-testid="fab-button"]');
+        if (!fab) {
+          setIsExpanded(false);
+          setUnreadCount(0);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isExpanded]);
 
   // 확장 시 읽음 처리
   useEffect(() => {
@@ -174,6 +215,7 @@ export default function TutorFeedbackOverlay() {
     <>
       {/* 우측 하단 FAB 버튼 */}
       <Fab
+        data-testid="fab-button"
         color="primary"
         sx={{
           position: 'fixed',
@@ -198,6 +240,7 @@ export default function TutorFeedbackOverlay() {
 
       {/* 피드백 패널 */}
       <Box
+        ref={panelRef}
         sx={{
           position: 'fixed',
           bottom: isExpanded ? 90 : -600,
@@ -237,6 +280,65 @@ export default function TutorFeedbackOverlay() {
               </Stack>
               
               <Stack direction="row" spacing={0.5}>
+                {/* 방해금지 모드 */}
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    color: 'white',
+                    bgcolor: doNotDisturb ? 'rgba(255,255,255,0.3)' : 'transparent',
+                  }}
+                  onClick={() => {
+                    const newDND = !doNotDisturb;
+                    setDoNotDisturb(newDND);
+                    // 방해금지 모드 ON 시 자동확장과 TTS도 OFF
+                    if (newDND) {
+                      setAutoExpand(false);
+                      setAutoPlayTTS(false);
+                    }
+                  }}
+                  title={doNotDisturb ? '방해금지 모드 켜짐' : '방해금지 모드 끄기'}
+                >
+                  {doNotDisturb ? <NotificationsOff fontSize="small" /> : <Notifications fontSize="small" />}
+                </IconButton>
+                
+                {/* 자동 패널 확장 */}
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    color: 'white',
+                    bgcolor: autoExpand ? 'rgba(255,255,255,0.3)' : 'transparent',
+                    opacity: doNotDisturb ? 0.5 : 1,
+                  }}
+                  onClick={() => {
+                    // 방해금지 모드일 때는 자동확장 켤 수 없음
+                    if (!doNotDisturb) {
+                      setAutoExpand(!autoExpand);
+                    }
+                  }}
+                  title={doNotDisturb ? '방해금지 모드에서는 사용 불가' : (autoExpand ? '자동 확장 켜짐' : '자동 확장 끄기')}
+                >
+                  <OpenInFull fontSize="small" />
+                </IconButton>
+                
+                {/* TTS 자동재생 */}
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    color: 'white',
+                    bgcolor: autoPlayTTS ? 'rgba(255,255,255,0.3)' : 'transparent',
+                    opacity: doNotDisturb ? 0.5 : 1,
+                  }}
+                  onClick={() => {
+                    // 방해금지 모드일 때는 TTS 자동재생 켤 수 없음
+                    if (!doNotDisturb) {
+                      setAutoPlayTTS(!autoPlayTTS);
+                    }
+                  }}
+                  title={doNotDisturb ? '방해금지 모드에서는 사용 불가' : (autoPlayTTS ? 'TTS 자동재생 켜짐' : 'TTS 자동재생 끄기')}
+                >
+                  {autoPlayTTS ? <VolumeUp fontSize="small" /> : <VolumeOff fontSize="small" />}
+                </IconButton>
+                
                 <IconButton
                   size="small"
                   sx={{ color: 'white' }}

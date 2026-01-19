@@ -59,6 +59,7 @@ import {
   getPaceRatioFeedback,
   getNetSpeakingDensityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
+import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
 
 // Prevent duplicate calls (StrictMode mount/unmount) + add simple cache
 const sentenceBatchInFlight = new Map(); // key -> Promise<string[]>
@@ -808,19 +809,8 @@ export default function PracticePage() {
 
       </Box>
 
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert 
-          onClose={() => setSnackbar({ ...snackbar, open: false })} 
-          severity={snackbar.severity}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+      {/* 튜터 피드백 오버레이 - 독립적 컴포넌트 */}
+      <TutorFeedbackOverlay />
     </StudentLayout>
   );
 }
