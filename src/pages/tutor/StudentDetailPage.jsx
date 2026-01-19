@@ -41,13 +41,13 @@ import { requestTTS } from '../../api/tts';
 
 // 목업 학생 상세 데이터
 const MOCK_STUDENT = {
-  email: 'choi@student.com',
-  name: '최토익',
+  email: 'hwplus@gmail.com',
+  name: '홍길동',
   activity: 'sentence',
-  status: 'listening',
-  speakingRatio: 30,
-  todayDuration: 8,
-  currentSentence: 'The weather is nice today.',
+  status: 'speaking',
+  speakingRatio: 75,
+  todayDuration: 15,
+  currentSentence: 'Hello, how are you today?',
 };
 
 // 목업 학습 이력
@@ -370,6 +370,22 @@ export default function StudentDetailPage() {
           </Alert>
         </Snackbar>
       </Box>
+
+      {/* Snackbar */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert 
+          onClose={() => setSnackbar({ ...snackbar, open: false })} 
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </TutorLayout>
   );
 }

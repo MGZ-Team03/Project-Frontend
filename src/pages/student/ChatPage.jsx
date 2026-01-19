@@ -25,6 +25,14 @@ import {
   Alert,
   CircularProgress,
   LinearProgress,
+  Paper,
+  Snackbar,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Fab,
 } from '@mui/material';
 import {
   VolumeUp,
@@ -37,11 +45,14 @@ import {
   Visibility,
   VisibilityOff,
   GridOn,
+  Notifications,
+  BugReport,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { getFeedbackHistory } from '../../api/tutorFeedback';
 import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
+import FeedbackDialog from '../../components/student/FeedbackDialog';
 
 // Hooks
 import { useMediaPipe } from '../../hooks/conversation/useMediaPipe';
@@ -51,6 +62,10 @@ import { useWhisperSTT } from '../../hooks/useWhisperSTT';
 import { startAiChat, sendAiChatMessage } from '../../api/aiChat';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
+import { useTTS } from '../../hooks/conversation/useTTS';
+import { useSpeechRecognition } from '../../hooks/conversation/useSpeechRecognition';
+import { useClaudeConversation } from '../../hooks/conversation/useClaudeConversation';
+import { useWebSocket } from '../../hooks/useWebSocket';
 
 // Data
 import { scenarios, getScenarioById } from '../../data/conversation/scenarios';
@@ -73,6 +88,9 @@ import {
 } from '../../store/selectors/speakingStatsSelectors';
 // server-backed chat + TTS
 
+// Redux
+import { loadFeedbackHistory, addFeedback } from '../../store/feedbackSlice';
+
 export default function ChatPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -82,6 +100,13 @@ export default function ChatPage() {
   const lastLatency = useSelector(selectLastResponseLatency);
   const avgLatency = useSelector(selectSessionAvgResponseLatency);
   const netDensity = useSelector(selectNetSpeakingDensity);
+  
+  // Redux state
+  const user = useSelector(state => state.auth.user);
+  const { feedbacks, loadingHistory } = useSelector(state => state.feedback);
+  
+  const userEmail = user?.email
+  const tutorEmail = user?.tutorEmail
 
   // Refs
   const videoRef = useRef(null);
@@ -254,6 +279,13 @@ export default function ChatPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // 피드백 히스토리 로드 (Redux 사용)
+  useEffect(() => {
+    if (userEmail) {
+      dispatch(loadFeedbackHistory({ userEmail, limit: 20 }));
+    }
+  }, [userEmail, dispatch]);
 
   // Initial AI message
   // const sendInitialMessage = async () => {
@@ -478,6 +510,87 @@ export default function ChatPage() {
     const seconds = Math.floor(ms / 1000);
     return `${seconds}초`;
   };
+
+  // WebSocket 메시지 핸들러
+  const handleWebSocketMessage = (data) => {
+    console.log('📩 WebSocket 메시지 수신:', data);
+    console.log('🔍 data.type:', data.type);
+
+    if (data.type === 'feedback') {
+      console.log('✅ 피드백 조건 통과');
+      const newFeedback = {
+        type: 'feedback',
+        from: data.from || 'hw_plus@naver.com',
+        message: data.message,
+        messageType: data.messageType || 'text',
+        audioUrl: data.audioUrl,
+        timestamp: data.timestamp || new Date().toISOString(),
+      };
+      console.log('📝 newFeedback 생성:', newFeedback);
+
+      // Redux에 추가
+      dispatch(addFeedback(newFeedback));
+      
+      setSnackbar({
+        open: true,
+        message: `[실시간] 튜터 피드백: ${data.message}`,
+        severity: 'success',
+      });
+    } else {
+      console.log('⚠️ 피드백 조건 실패 - type이', data.type);
+    }
+  };
+
+  // WebSocket 연결 - handleWebSocketMessage 정의 후 바로 연결
+  const { isConnected, error: wsError, sendMessage: wsSendMessage } = useWebSocket(
+    userEmail, 
+    tutorEmail, 
+    handleWebSocketMessage
+  );
+
+  console.log('🔌 WebSocket 상태:', { isConnected, userEmail, tutorEmail, wsError });
+
+  // 로컬 피드백 추가 핸들러
+  const handleAddLocalFeedback = (message) => {
+    const newFeedback = {
+      type: 'feedback',
+      from: 'hw_plus@naver.com',
+      message,
+      messageType: 'text',
+      timestamp: new Date().toISOString(),
+    };
+
+    dispatch(addFeedback(newFeedback));
+    setSnackbar({
+      open: true,
+      message: `학생 피드백: ${message}`,
+      severity: 'info',
+    });
+    setMockDialogOpen(false);
+  };
+
+  // WebSocket으로 피드백 전송 핸들러
+  const handleSendWebSocketFeedback = (message) => {
+    wsSendMessage({
+      action: 'sendFeedback',
+      type: 'feedback',
+      message,
+      from: userEmail,
+      to: 'hw_plus@naver.com',
+    });
+    setSnackbar({
+      open: true,
+      message: '📡 WebSocket으로 메시지 전송됨',
+      severity: 'info',
+    });
+  };
+
+  // 브라우저 알림 권한 요청
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   const scenario = getScenarioById(currentScenario);
 
@@ -899,6 +1012,36 @@ export default function ChatPage() {
           </Box>
         </Stack>
       </Box>
+
+      {/* WebSocket 목업 테스트 버튼 */}
+      <Fab
+        color="secondary"
+        aria-label="mock-feedback"
+        sx={{
+          position: 'fixed',
+          bottom: 16,
+          right: 16,
+          zIndex: 1000,
+        }}
+        onClick={() => setMockDialogOpen(true)}
+      >
+        <BugReport />
+      </Fab>
+
+      {/* 피드백 다이얼로그 */}
+      <FeedbackDialog
+        open={mockDialogOpen}
+        onClose={() => setMockDialogOpen(false)}
+        feedbacks={feedbacks}
+        loadingHistory={loadingHistory}
+        isConnected={isConnected}
+        wsError={wsError}
+        userEmail={userEmail}
+        onSendWebSocket={handleSendWebSocketFeedback}
+        onAddLocal={handleAddLocalFeedback}
+      />
+
+      {/* Snackbar 알림 */}
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}

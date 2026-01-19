@@ -5,10 +5,11 @@ import { WS_URL } from '../utils/constants';
  * WebSocket 연결 관리 커스텀 훅
  * 
  * @param {string} userEmail - 사용자 이메일
+ * @param {string} tutorEmail - 튜터 이메일 (학생인 경우)
  * @param {function} onMessage - 메시지 수신 콜백
  * @returns {object} { isConnected, error, sendMessage }
  */
-export const useWebSocket = (userEmail, onMessage) => {
+export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
   const wsRef = useRef(null);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
@@ -18,8 +19,11 @@ export const useWebSocket = (userEmail, onMessage) => {
     if (!userEmail) return;
 
     const connect = () => {
-      // WebSocket 연결 (user_email을 쿼리 파라미터로 전달)
-      const wsUrl = `${WS_URL}?user_email=${encodeURIComponent(userEmail)}`;
+      // WebSocket 연결 (user_email과 tutor_email을 쿼리 파라미터로 전달)
+      let wsUrl = `${WS_URL}?user_email=${encodeURIComponent(userEmail)}`;
+      if (tutorEmail) {
+        wsUrl += `&tutor_email=${encodeURIComponent(tutorEmail)}`;
+      }
       console.log('🔌 WebSocket 연결 시도:', wsUrl);
       
       const ws = new WebSocket(wsUrl);
@@ -75,7 +79,7 @@ export const useWebSocket = (userEmail, onMessage) => {
         wsRef.current.close();
       }
     };
-  }, [userEmail, onMessage]);
+  }, [userEmail, tutorEmail, onMessage]);
 
   const sendMessage = (message) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {

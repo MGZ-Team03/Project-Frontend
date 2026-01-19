@@ -39,79 +39,13 @@ import { sendFeedback } from '../../api/tutorFeedback';
 // 목업 학생 데이터
 const MOCK_STUDENTS = [
   {
-    email: 'park@student.com',
-    name: '박영어',
+    email: 'hwplus@gmail.com',
+    name: '홍길동',
     activity: 'sentence',
     status: 'speaking',
-    speakingRatio: 85,
-    duration: 12,
-    currentSentence: 'How are you doing today?',
-  },
-  {
-    email: 'kim@student.com',
-    name: '김스피킹',
-    activity: 'ai_chat',
-    status: 'speaking',
-    speakingRatio: 78,
-    duration: 23,
-    currentTopic: '카페 주문',
-  },
-  {
-    email: 'choi@student.com',
-    name: '최토익',
-    activity: 'sentence',
-    status: 'listening',
-    speakingRatio: 30,
-    duration: 8,
-    currentSentence: 'The weather is nice today.',
-    warning: true,
-  },
-  {
-    email: 'jung@student.com',
-    name: '정회화',
-    activity: null,
-    status: 'inactive',
-    speakingRatio: 0,
-    duration: 0,
-    lastActive: '5분 전',
-    alert: true,
-  },
-  {
-    email: 'lee@student.com',
-    name: '이잉글',
-    activity: 'ai_chat',
-    status: 'speaking',
-    speakingRatio: 72,
+    speakingRatio: 75,
     duration: 15,
-    currentTopic: '길 묻기',
-  },
-  {
-    email: 'han@student.com',
-    name: '한영희',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 80,
-    duration: 18,
-    currentSentence: 'I would like a cup of coffee.',
-  },
-  {
-    email: 'song@student.com',
-    name: '송민수',
-    activity: 'ai_chat',
-    status: 'listening',
-    speakingRatio: 45,
-    duration: 10,
-    currentTopic: '자기소개',
-    warning: true,
-  },
-  {
-    email: 'yoon@student.com',
-    name: '윤지민',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 90,
-    duration: 30,
-    currentSentence: 'Where is the nearest subway station?',
+    currentSentence: 'Hello, how are you today?',
   },
 ];
 
@@ -281,7 +215,7 @@ function StudentCard({ student, onClick, onFeedbackClick, onQuickFeedback, disab
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const tutorEmail = useSelector(state => state.auth.user?.email);
+  const tutorEmail = useSelector(state => state.auth.user?.email) || 'hw_plus@naver.com';
   
   const [students] = useState(MOCK_STUDENTS);
   const [feedbackDialog, setFeedbackDialog] = useState(false);
@@ -289,6 +223,13 @@ export default function DashboardPage() {
   const [feedbackText, setFeedbackText] = useState('');
   const [notification, setNotification] = useState(null);
   const [sending, setSending] = useState(false);
+
+  // 세션 ID 생성 함수
+  const generateSessionId = (studentEmail) => {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    return `session_${timestamp}_${studentEmail.split('@')[0]}_${random}`;
+  };
 
   const activeStudents = students.filter(s => s.status !== 'inactive');
   const speakingStudents = students.filter(s => s.status === 'speaking');
@@ -315,12 +256,13 @@ export default function DashboardPage() {
 
     setSending(true);
     try {
+      const sessionId = generateSessionId(selectedStudent.email);
       const result = await sendFeedback({
         tutor_email: tutorEmail,
         student_email: selectedStudent.email,
         message: feedbackText,
         message_type: 'text',
-        session_id: 'default'
+        session_id: sessionId
       });
 
       console.log('피드백 전송 결과:', result);
@@ -348,12 +290,13 @@ export default function DashboardPage() {
     event?.stopPropagation();
     setSending(true);
     try {
+      const sessionId = generateSessionId(student.email);
       const result = await sendFeedback({
         tutor_email: tutorEmail,
         student_email: student.email,
         message: message,
         message_type: 'text',
-        session_id: 'default'
+        session_id: sessionId
       });
 
       setNotification({

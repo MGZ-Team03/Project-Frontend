@@ -35,11 +35,11 @@ export function useClaudeSentenceGenerator() {
       const difficultyConfig = DIFFICULTY_LEVELS[difficulty] || DIFFICULTY_LEVELS['중'];
       const maxTokens = 100; // Fixed for sentence generation (short response)
 
-      console.log('[SentenceGenerator] Generating sentence:', {
-        difficulty,
-        maxTokens,
-        systemPrompt: systemPrompt.substring(0, 80) + '...'
-      });
+      // console.log('[SentenceGenerator] Generating sentence:', {
+      //   difficulty,
+      //   maxTokens,
+      //   systemPrompt: systemPrompt.substring(0, 80) + '...'
+      // });
 
       // Call Claude API (non-streaming)
       const response = await anthropic.messages.create({
@@ -57,7 +57,7 @@ export function useClaudeSentenceGenerator() {
       // Extract sentence text from response
       const sentenceText = response.content[0].text.trim();
 
-      console.log('[SentenceGenerator] Generated sentence:', sentenceText);
+      // console.log('[SentenceGenerator] Generated sentence:', sentenceText);
 
       setIsLoading(false);
       return sentenceText;
@@ -93,11 +93,11 @@ export function useClaudeSentenceGenerator() {
     try {
       const maxTokens = 600; // Keep responses short; helps avoid unnecessary token usage
 
-      console.log('[SentenceGenerator] Generating batch sentences:', {
-        difficulty,
-        maxTokens,
-        systemPrompt: systemPrompt.substring(0, 80) + '...'
-      });
+      // console.log('[SentenceGenerator] Generating batch sentences:', {
+      //   difficulty,
+      //   maxTokens,
+      //   systemPrompt: systemPrompt.substring(0, 80) + '...'
+      // });
 
       // Call Claude API (non-streaming)
       const response = await anthropic.messages.create({
@@ -114,7 +114,7 @@ export function useClaudeSentenceGenerator() {
 
       // Extract JSON array from response
       const responseText = response.content[0].text.trim();
-      console.log('[SentenceGenerator] Raw batch response:', responseText);
+      // console.log('[SentenceGenerator] Raw batch response:', responseText);
 
       let sentences = [];
       try {
@@ -131,7 +131,7 @@ export function useClaudeSentenceGenerator() {
         throw new Error('Failed to parse generated sentences');
       }
 
-      console.log(`[SentenceGenerator] Successfully generated ${sentences.length} sentences`);
+      // console.log(`[SentenceGenerator] Successfully generated ${sentences.length} sentences`);
 
       setIsLoading(false);
       return sentences;
