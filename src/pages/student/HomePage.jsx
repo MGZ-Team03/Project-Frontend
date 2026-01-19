@@ -26,7 +26,6 @@ import {
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
 import { scenarios } from '../../data/conversation/scenarios';
-import {useSelector} from "react-redux";
 import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
 
