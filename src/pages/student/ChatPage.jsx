@@ -159,12 +159,7 @@ export default function ChatPage() {
   } = useWhisperSTT();
 
   const getData = useCallback(() => {
-    console.log("websocket 실행!!");
-
-    if(!user?.email) {
-      console.log("❌ 사용자 정보 없음");
-      return null;
-    }
+    if(!user?.email) return null;
 
     return {
       action: "status",
@@ -176,10 +171,10 @@ export default function ChatPage() {
         assignedAt: new Date().toISOString().split("T")[0],
       }
     };
-  }, [user?.email]); // ← tutorEmail도 추가!
+  }, [user?.email, user?.tutorEmail]);
 
 // ✅ 함수 자체를 전달 (실행하지 않음!)
-  const socket = useWebSocket(getData);
+  useWebSocket(getData);
 
   // Redux에서 전역 Whisper 상태 가져오기
   const whisperStatus = useSelector(selectWhisperPreloadStatus);
@@ -1107,12 +1102,14 @@ export default function ChatPage() {
                               index === messages.length - 1 &&
                               suggestedReplies.length > 0 && (
                                 <Box sx={{ mt: 1 }}>
-                                  <Stack
-                                    direction="row"
-                                    spacing={0.5}
-                                    useFlexGap
-                                    flexWrap="wrap"
-                                    sx={{ mt: 0.5, alignItems: 'center' }}
+                                  <Box
+                                    sx={{
+                                      mt: 0.5,
+                                      display: 'flex',
+                                      flexWrap: 'wrap',
+                                      gap: 0.5,
+                                      alignItems: 'center',
+                                    }}
                                   >
                                     {suggestedReplies.map((suggestion, idx) => (
                                       <Chip
@@ -1124,7 +1121,7 @@ export default function ChatPage() {
                                         sx={{ cursor: 'pointer' }}
                                       />
                                     ))}
-                                  </Stack>
+                                  </Box>
                                 </Box>
                               )}
 
