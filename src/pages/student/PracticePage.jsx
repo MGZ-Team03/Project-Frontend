@@ -25,12 +25,14 @@ import {
   GridOn,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
+import { getFeedbackHistory } from '../../api/tutorFeedback';
 
 // Hooks
 import { useMediaPipe } from '../../hooks/conversation/useMediaPipe';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { useWhisperSTT } from '../../hooks/useWhisperSTT';
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
+import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 
 // API
 import { generatePracticeSentences } from '../../api/sentences';
@@ -42,7 +44,6 @@ import { validateSentence } from '../../utils/conversation/sentenceValidator';
 import { getScenarioById } from '../../data/conversation/scenarios';
 
 import ws from "../../config/webSocketConfig.js";
-import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 
 // Redux
 import {
@@ -59,6 +60,7 @@ import {
   getPaceRatioFeedback,
   getNetSpeakingDensityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
+import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
 
 // Prevent duplicate calls (StrictMode mount/unmount) + add simple cache
 const sentenceBatchInFlight = new Map(); // key -> Promise<string[]>
@@ -959,6 +961,9 @@ export default function PracticePage() {
         </Card>
 
       </Box>
+
+      {/* 튜터 피드백 오버레이 - 독립적 컴포넌트 */}
+      <TutorFeedbackOverlay />
     </StudentLayout>
   );
 }

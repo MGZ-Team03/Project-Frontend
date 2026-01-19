@@ -16,9 +16,19 @@ import {
   ListItem,
   ListItemAvatar,
   ListItemText,
+  Paper,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Snackbar,
   Alert,
   CircularProgress,
   LinearProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   VolumeUp,
@@ -30,10 +40,12 @@ import {
   Visibility,
   VisibilityOff,
   GridOn,
+  Notifications,
   Feedback,
   LightbulbOutlined,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
+import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
 
 // Hooks
 import { useMediaPipe } from '../../hooks/conversation/useMediaPipe';
@@ -42,6 +54,8 @@ import { startAiChat, sendAiChatMessage } from '../../api/aiChat';
 import { getRecommendedSentences, getSentenceFeedback } from '../../api/sentences';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
+import { useTTS } from '../../hooks/conversation/useTTS';
+import { useSpeechRecognition } from '../../hooks/conversation/useSpeechRecognition';
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
 
 
@@ -77,6 +91,9 @@ export default function ChatPage() {
   const lastLatency = useSelector(selectLastResponseLatency);
   const avgLatency = useSelector(selectSessionAvgResponseLatency);
   const netDensity = useSelector(selectNetSpeakingDensity);
+  
+  // Redux state
+  const user = useSelector(state => state.auth.user);
 
   // Refs
   const videoRef = useRef(null);
@@ -140,8 +157,6 @@ export default function ChatPage() {
     transcribe: whisperTranscribe,
     error: whisperError,
   } = useWhisperSTT();
-
-  const user = useSelector(state => state.auth.user);
 
   const getData = useCallback(() => {
     if(!user?.email) return null;
@@ -1187,6 +1202,9 @@ export default function ChatPage() {
           </Box>
         </Stack>
       </Box>
+
+      {/* 튜터 피드백 오버레이 - 독립적 컴포넌트 */}
+      <TutorFeedbackOverlay />
     </StudentLayout>
   );
 }

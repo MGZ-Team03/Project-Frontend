@@ -47,6 +47,22 @@ export const logout = () => {
   localStorage.removeItem('user');
 };
 
+// 학생의 튜터 정보 가져오기
+export const getMyTutor = async (studentEmail) => {
+  try {
+    const response = await axios.get('/api/student/tutor', {
+      params: { student_email: studentEmail }
+    });
+    return response.data; // { tutor_email, student_email, assigned_at, status }
+  } catch (error) {
+    console.error('Get my tutor error:', error);
+    if (error.response?.status === 404) {
+      return null; // 튜터가 할당되지 않음
+    }
+    throw error;
+  }
+};
+
 // 현재 사용자 정보 가져오기 (JWT + DynamoDB)
 export const getCurrentUser = async () => {
   const idToken = localStorage.getItem('idToken');
@@ -71,7 +87,22 @@ export const getCurrentUser = async () => {
     // axios 인터셉터가 Authorization 헤더를 자동 추가함
     const response = await axios.get('/api/auth/user');
     
-    return response.data; // { email, name, role, created_at }
+    const user = response.data; // { email, name, role, created_at }
+    
+    // 학생이면 튜터 정보도 가져오기
+    if (user.role === 'student') {
+      try {
+        const tutorInfo = await getMyTutor(user.email);
+        if (tutorInfo) {
+          user.tutorEmail = tutorInfo.tutor_email;
+        }
+      } catch (error) {
+        console.warn('Failed to get tutor info:', error);
+        // 튜터 정보 조회 실패해도 로그인은 유지
+      }
+    }
+    
+    return user;
     
   } catch (error) {
     console.error('Get current user error:', error);
@@ -82,4 +113,3 @@ export const getCurrentUser = async () => {
     return null;
   }
 };
-
