@@ -4,6 +4,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
   Typography,
+  Button,
   Card,
   CardContent,
   Stack,
@@ -29,17 +30,19 @@ import {
   Visibility,
   VisibilityOff,
   GridOn,
+  Feedback,
+  LightbulbOutlined,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
 
 // Hooks
 import { useMediaPipe } from '../../hooks/conversation/useMediaPipe';
-import { useAudioDetection } from '../../hooks/conversation/useAudioDetection';
-import { useSpeakingTimer } from '../../hooks/conversation/useSpeakingTimer';
 import { useWhisperSTT } from '../../hooks/useWhisperSTT';
 import { startAiChat, sendAiChatMessage } from '../../api/aiChat';
+import { getRecommendedSentences, getSentenceFeedback } from '../../api/sentences';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
+import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
 
 
 
@@ -84,14 +87,17 @@ export default function ChatPage() {
   const lastAutoSpokenRef = useRef(null);
   const conversationIdRef = useRef(null);
   const prevSpeakingRef = useRef(false);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const micStreamRef = useRef(null);
   const sttStatusMsgIdRef = useRef(1);
+  const stopDebounceTimerRef = useRef(null);
+  const [isWhisperRecording, setIsWhisperRecording] = useState(false);
+  const whisperStreamRef = useRef(null);
+  const whisperRecorderRef = useRef(null);
+  const whisperChunksRef = useRef([]);
+  const whisperStartedAtRef = useRef(null);
 
   // Get difficulty and scenario from navigation state
   const difficulty = location.state?.difficulty || '중';
-  const initialScenario = location.state?.scenario || 'restaurant';
+  const initialScenario = location.state?.scenario || 'small_talk';
 
   // State - Scenario
   const [currentScenario, setCurrentScenario] = useState(initialScenario);
@@ -99,11 +105,19 @@ export default function ChatPage() {
   // State - Messages
   const [messages, setMessages] = useState([]);
   const [revealedMessages, setRevealedMessages] = useState(new Set());
+  const [messageFeedback, setMessageFeedback] = useState({}); // messageIndex -> feedback data
+  const [feedbackLoading, setFeedbackLoading] = useState({}); // messageIndex -> loading state
+  const [suggestedReplies, setSuggestedReplies] = useState([]); // AI 응답 후 추천 문장들
+  const [suggestLoading, setSuggestLoading] = useState(false); // 추천 문장 로딩 상태
+  const [conversationEnded, setConversationEnded] = useState(false); // 대화 종료 여부
+  const [endReason, setEndReason] = useState(null); // 종료 이유
 
   // State - Input
-  const [isRecording, setIsRecording] = useState(false);
   const [inputText, setInputText] = useState('');
   const [currentSpeakingTime, setCurrentSpeakingTime] = useState(0);
+  const [totalTimeMs, setTotalTimeMs] = useState(0);
+  const [lastTotalDurationMs, setLastTotalDurationMs] = useState(0);
+  const [lastSpeechDurationMs, setLastSpeechDurationMs] = useState(0);
 
   // State - UI
   const [showMouthLandmarks, setShowMouthLandmarks] = useState(false);
@@ -114,24 +128,17 @@ export default function ChatPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sttError, setSttError] = useState(null);
 
-  // Hooks - MediaPipe & Audio
+  // Hooks - MediaPipe
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
     videoRef,
     canvasRef,
     { showGrid, showMouthLandmarks }
   );
 
-  const { audioVolume, isInitialized: isAudioInit } = useAudioDetection(isRecording);
-
-  const { totalTime, speakingTime, ratio, currentlySpeaking, resetTimers } =
-    useSpeakingTimer(isRecording, landmarksRef, audioVolume);
-
-  // Hooks - STT (Whisper, local worker)
+  // Hooks - Whisper STT (WebGPU 전용)
   const {
     transcribe: whisperTranscribe,
-    status: whisperStatus,
     error: whisperError,
-    progress: whisperProgress,
   } = useWhisperSTT();
 
   const user = useSelector(state => state.auth.user);
@@ -159,8 +166,34 @@ export default function ChatPage() {
 // ✅ 함수 자체를 전달 (실행하지 않음!)
   const socket = useWebSocket(getData);
 
+  // Redux에서 전역 Whisper 상태 가져오기
+  const whisperStatus = useSelector(selectWhisperPreloadStatus);
+
+  // Debug: record microphone in parallel (for replay)
+
+  // sttEngine useEffect 제거됨 (Whisper 전용)
+
+  useEffect(() => {
+    return () => {
+      if (whisperRecorderRef.current && whisperRecorderRef.current.state === 'recording') {
+        try {
+          whisperRecorderRef.current.stop();
+        } catch (_) {}
+      }
+      whisperRecorderRef.current = null;
+      whisperChunksRef.current = [];
+      if (whisperStreamRef.current) {
+        whisperStreamRef.current.getTracks().forEach((t) => {
+          try { t.enabled = false; } catch (_) {}
+          try { t.stop(); } catch (_) {}
+        });
+        whisperStreamRef.current = null;
+      }
+    };
+  }, []);
+
   // Hooks - Server TTS
-  const { playText, stop: stopTTS, isPlaying: isSpeaking } = useTTSAudio();
+  const { playText, stop: stopTTS, isPlaying: isSpeaking, ttsStatus } = useTTSAudio();
   const [aiError, setAiError] = useState(null);
   const [isAILoading, setIsAILoading] = useState(false);
 
@@ -200,22 +233,12 @@ export default function ChatPage() {
     };
   }, []);
 
-  // Cleanup mic stream on unmount
+  // Cleanup timers on unmount
   useEffect(() => {
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        try {
-          mediaRecorderRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-      mediaRecorderRef.current = null;
-      audioChunksRef.current = [];
-
-      if (micStreamRef.current) {
-        micStreamRef.current.getTracks().forEach((t) => t.stop());
-        micStreamRef.current = null;
+      if (stopDebounceTimerRef.current) {
+        clearTimeout(stopDebounceTimerRef.current);
+        stopDebounceTimerRef.current = null;
       }
     };
   }, []);
@@ -228,17 +251,7 @@ export default function ChatPage() {
     };
   }, [dispatch]);
 
-  // Redux: 발화 상태 변경 감지 -> Response Latency 자동 계산
-  useEffect(() => {
-    if (currentlySpeaking && !prevSpeakingRef.current) {
-      // 발화 시작
-      dispatch(userSpeakingStarted({ startTime: Date.now() }));
-    } else if (!currentlySpeaking && prevSpeakingRef.current) {
-      // 발화 종료
-      dispatch(userSpeakingEnded());
-    }
-    prevSpeakingRef.current = currentlySpeaking;
-  }, [currentlySpeaking, dispatch]);
+  // Redux: Response Latency용 발화 시작/종료는 Web Speech 시작/종료 시점으로 계산
 
   // Redux: AI 응답 로딩 상태 추적
   useEffect(() => {
@@ -305,82 +318,178 @@ export default function ChatPage() {
     }
   };
 
-  // Mic toggle handler
+  // 사용자 메시지에 대한 피드백 요청
+  const handleRequestFeedback = async (messageIndex, userMessage) => {
+    // 이전 AI 메시지를 originalText로 사용 (대화 맥락상 AI가 말한 것에 대한 사용자 응답)
+    const prevMessages = messages.slice(0, messageIndex);
+    const lastAiMessage = [...prevMessages].reverse().find(m => m.role === 'assistant');
+    const originalText = lastAiMessage?.content || '';
+
+    setFeedbackLoading((prev) => ({ ...prev, [messageIndex]: true }));
+
+    try {
+      const response = await getSentenceFeedback({
+        originalText,
+        userText: userMessage,
+        difficulty: toApiDifficulty(difficulty),
+      });
+
+      setMessageFeedback((prev) => ({
+        ...prev,
+        [messageIndex]: response,
+      }));
+    } catch (error) {
+      console.error('Feedback request error:', error);
+      setMessageFeedback((prev) => ({
+        ...prev,
+        [messageIndex]: { error: error.message || '피드백을 가져오는데 실패했습니다.' },
+      }));
+    } finally {
+      setFeedbackLoading((prev) => ({ ...prev, [messageIndex]: false }));
+    }
+  };
+
+  // AI 응답 후 추천 문장 생성
+  const generateSuggestedReplies = async () => {
+    setSuggestLoading(true);
+    setSuggestedReplies([]);
+
+    try {
+      const response = await getRecommendedSentences({
+        topic: toApiTopic(currentScenario),
+        difficulty: toApiDifficulty(difficulty),
+        count: 3,
+        conversationId: conversationIdRef.current, // 대화 중이면 턴 차감
+      });
+
+      const sentences = (response?.sentences || []).map(s =>
+        typeof s === 'string' ? s : s?.text
+      ).filter(Boolean);
+
+      setSuggestedReplies(sentences);
+    } catch (error) {
+      console.error('Suggest replies error:', error);
+      setSuggestedReplies([]);
+    } finally {
+      setSuggestLoading(false);
+    }
+  };
+
+  // Mic toggle handler (Whisper only)
   const handleMicToggle = async () => {
-    if (isRecording) {
-      // Stop recording
-      setIsRecording(false);
-      setCurrentSpeakingTime(speakingTime / 1000); // Convert to seconds
+    if (isWhisperRecording) {
+      // 수동 stop(끝자락 잘림 방지)
+      if (stopDebounceTimerRef.current) return;
+      stopDebounceTimerRef.current = setTimeout(() => {
+        try {
+          whisperRecorderRef.current?.stop?.();
+        } catch (_) {}
+        stopDebounceTimerRef.current = null;
+      }, 500);
+      return;
+    }
 
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-    } else {
-      // Start recording
-      setInputText('');
-      setIsRecording(true);
-      resetTimers();
-      setSttError(null);
+    setInputText('');
+    setSttError(null);
 
-      audioChunksRef.current = [];
+    const sttMsgId = `stt-${Date.now()}-${sttStatusMsgIdRef.current++}`;
+    dispatch(userSpeakingStarted({ startTime: Date.now() }));
+    prevSpeakingRef.current = true;
 
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        micStreamRef.current = stream;
+    try {
+      // Whisper only
+      setIsTranscribing(false);
 
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
+      setMessages((prev) => [
+        ...prev,
+        { role: 'system', content: '🎤 녹음 중... (다시 누르면 종료 후 인식)', streaming: true, timestamp: new Date(), id: sttMsgId },
+      ]);
 
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) audioChunksRef.current.push(event.data);
-        };
+      whisperChunksRef.current = [];
+      whisperStartedAtRef.current = Date.now();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      whisperStreamRef.current = stream;
 
-        mediaRecorder.onstop = async () => {
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          audioChunksRef.current = [];
+      const preferred = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+      const mimeType = preferred.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      whisperRecorderRef.current = recorder;
 
-          // stop mic stream
-          if (micStreamRef.current) {
-            micStreamRef.current.getTracks().forEach((t) => t.stop());
-            micStreamRef.current = null;
-          }
+      recorder.ondataavailable = (e) => {
+        if (e?.data?.size > 0) whisperChunksRef.current.push(e.data);
+      };
 
-          if (!audioBlob || audioBlob.size === 0) return;
+      recorder.onstop = async () => {
+        const blobType = mimeType || whisperChunksRef.current?.[0]?.type || 'audio/webm';
+        const audioBlob = new Blob(whisperChunksRef.current, { type: blobType });
+        whisperChunksRef.current = [];
 
-          const sttMsgId = `stt-${Date.now()}-${sttStatusMsgIdRef.current++}`;
-          try {
-            setIsTranscribing(true);
-            setMessages((prev) => [
-              ...prev,
-              { role: 'system', content: '🎤 음성 인식 중...', streaming: true, timestamp: new Date(), id: sttMsgId },
-            ]);
-            const text = await whisperTranscribe(audioBlob);
-            if (text) setInputText(text);
-            setMessages((prev) =>
-              prev.map((m) =>
-                m?.id === sttMsgId
-                  ? { ...m, content: `🎤 인식 결과: ${text?.trim() || '(인식 실패)'}`, streaming: false }
-                  : m
-              )
-            );
-          } catch (e) {
-            console.error('Whisper STT error:', e);
-            setSttError(e?.message || String(e));
-            const errMsg = e?.message || String(e);
-            setMessages((prev) =>
-              prev.map((m) =>
-                m?.id === sttMsgId ? { ...m, content: `⚠️ 음성 인식 실패: ${errMsg}`, streaming: false } : m
-              )
-            );
-          } finally {
-            setIsTranscribing(false);
-          }
-        };
+        if (whisperStreamRef.current) {
+          whisperStreamRef.current.getTracks().forEach((t) => {
+            try { t.enabled = false; } catch (_) {}
+            try { t.stop(); } catch (_) {}
+          });
+          whisperStreamRef.current = null;
+        }
+        whisperRecorderRef.current = null;
+        setIsWhisperRecording(false);
 
-        mediaRecorder.start();
-      } catch (e) {
-        console.error('Failed to start recording:', e);
-        setIsRecording(false);
+        const durationMs = Math.max(0, Date.now() - (whisperStartedAtRef.current || Date.now()));
+        setCurrentSpeakingTime(durationMs / 1000);
+        setLastTotalDurationMs(durationMs);
+        setLastSpeechDurationMs(durationMs);
+        setTotalTimeMs((t) => t + durationMs);
+
+        setIsTranscribing(true);
+        try {
+          const text = String(
+            await whisperTranscribe(audioBlob, { backend: 'webgpu', vad: true, trimThreshold: 0.003, trimPaddingSec: 0.1 })
+          ).trim();
+          if (text) setInputText(text);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m?.id === sttMsgId
+                ? { ...m, content: `🎤 인식 결과: ${text || '(인식 실패)'}`, streaming: false }
+                : m
+            )
+          );
+        } catch (e) {
+          const errMsg = e?.message || String(e);
+          setSttError(errMsg);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m?.id === sttMsgId ? { ...m, content: `⚠️ 음성 인식 실패: ${errMsg}`, streaming: false } : m
+            )
+          );
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      recorder.start();
+      setIsWhisperRecording(true);
+      return; // now recording; stop on next click
+    } catch (e) {
+      console.error('STT error:', e);
+      const errMsg = e?.message || String(e);
+      setSttError(errMsg);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m?.id === sttMsgId ? { ...m, content: `⚠️ 음성 인식 실패: ${errMsg}`, streaming: false } : m
+        )
+      );
+    } finally {
+      setIsTranscribing(false);
+      if (prevSpeakingRef.current) {
+        dispatch(userSpeakingEnded());
+        prevSpeakingRef.current = false;
       }
     }
   };
@@ -426,6 +535,12 @@ export default function ChatPage() {
 
       const assistantText = res?.aiMessage || res?.assistantMessage || res?.message || res?.content || '';
 
+      // 턴 제한 체크
+      if (res?.ended === true && res?.reason === 'TURN_LIMIT') {
+        setConversationEnded(true);
+        setEndReason('TURN_LIMIT');
+      }
+
       // replace last streaming assistant bubble
       setMessages((prev) => {
         const next = [...prev];
@@ -441,6 +556,9 @@ export default function ChatPage() {
         }
         return next;
       });
+
+      // AI 응답 후 추천 문장 초기화 (버튼 클릭 시 생성)
+      setSuggestedReplies([]);
 
       // auto TTS
       if (assistantText) {
@@ -492,9 +610,10 @@ export default function ChatPage() {
   };
 
   const scenario = getScenarioById(currentScenario);
+  const isRecordingNow = isWhisperRecording;
 
   return (
-    <StudentLayout todayTime={Math.floor(totalTime / 1000 / 60)}>
+    <StudentLayout todayTime={Math.floor(totalTimeMs / 1000 / 60)}>
       <Box sx={{ maxWidth: 1400, mx: 'auto', width: '100%', height: 'calc(100vh - 200px)' }}>
         {/* Permission Error */}
         {hasCameraPermission === false && (
@@ -525,13 +644,7 @@ export default function ChatPage() {
           </Alert>
         )}
 
-        {/* STT Model Download/Load */}
-        {(whisperStatus === 'loading' || whisperProgress) && !isTranscribing && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <CircularProgress size={16} sx={{ mr: 1 }} />
-            STT 모델 {whisperProgress?.percent != null ? `다운로드 중... ${whisperProgress.percent}%` : '준비 중...'} (초기 1회 로딩)
-          </Alert>
-        )}
+        {/* STT 상태 - 모델 로딩은 StudentLayout 배너에서 표시 */}
         {isTranscribing && (
           <Alert severity="info" sx={{ mb: 2 }}>
             <CircularProgress size={16} sx={{ mr: 1 }} />
@@ -541,6 +654,23 @@ export default function ChatPage() {
         {(sttError || whisperError) && (
           <Alert severity="warning" sx={{ mb: 2 }}>
             STT 오류: {sttError || whisperError}
+          </Alert>
+        )}
+
+
+        {/* TTS Generating */}
+        {ttsStatus === 'generating' && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <CircularProgress size={16} sx={{ mr: 1 }} />
+            오디오 생성 중...
+          </Alert>
+        )}
+
+        {/* AI Loading */}
+        {isAILoading && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <CircularProgress size={16} sx={{ mr: 1 }} />
+            AI 응답 대기 중...
           </Alert>
         )}
 
@@ -613,9 +743,9 @@ export default function ChatPage() {
                   {/* Speaking Indicator */}
                   <Box sx={{ textAlign: 'center' }}>
                     <Chip
-                      icon={currentlySpeaking ? <Mic /> : <MicOff />}
-                      label={currentlySpeaking ? '🎤 발음 중...' : '준비'}
-                      color={currentlySpeaking ? 'success' : 'default'}
+                      icon={isRecordingNow ? <Mic /> : <MicOff />}
+                      label={isRecordingNow ? '🎤 인식/녹음 중...' : '대기'}
+                      color={isRecordingNow ? 'success' : 'default'}
                       sx={{ fontSize: '1rem', py: 2, px: 1 }}
                     />
                   </Box>
@@ -624,7 +754,7 @@ export default function ChatPage() {
                   <Stack direction="row" spacing={2} justifyContent="center">
                     <Box sx={{ textAlign: 'center' }}>
                       <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                        {formatTime(speakingTime)}
+                        {formatTime(lastSpeechDurationMs)}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         발음 시간
@@ -632,7 +762,7 @@ export default function ChatPage() {
                     </Box>
                     <Box sx={{ textAlign: 'center' }}>
                       <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                        {formatTime(totalTime)}
+                        {formatTime(lastTotalDurationMs)}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         전체 시간
@@ -643,11 +773,11 @@ export default function ChatPage() {
                   {/* Progress Bar */}
                   <Box>
                     <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
-                      발음 비율: {ratio}%
+                      발음 비율: {lastTotalDurationMs > 0 ? Math.round((lastSpeechDurationMs / lastTotalDurationMs) * 100) : 0}%
                     </Typography>
                     <LinearProgress
                       variant="determinate"
-                      value={ratio}
+                      value={lastTotalDurationMs > 0 ? Math.round((lastSpeechDurationMs / lastTotalDurationMs) * 100) : 0}
                       sx={{
                         height: 8,
                         borderRadius: 4,
@@ -742,7 +872,7 @@ export default function ChatPage() {
                   <Chip label={`난이도: ${difficulty}`} size="small" color="primary" />
                   <Box sx={{ flexGrow: 1 }} />
                   <Typography variant="body2" color="text.secondary">
-                    총 대화 시간: {formatTime(totalTime)}
+                    총 대화 시간: {formatTime(totalTimeMs)}
                   </Typography>
                 </Stack>
               </CardContent>
@@ -839,6 +969,23 @@ export default function ChatPage() {
                               )}
                             </Box>
 
+                            {/* AI 메시지: 추천 문장 버튼 (스피커 왼쪽) + 스피커 버튼 */}
+                            {message.role === 'assistant' && !message.streaming && index === messages.length - 1 && (
+                              <IconButton
+                                size="small"
+                                onClick={generateSuggestedReplies}
+                                disabled={suggestLoading}
+                                title="답변 추천"
+                                sx={{ mt: 0.5 }}
+                              >
+                                {suggestLoading ? (
+                                  <CircularProgress size={16} />
+                                ) : (
+                                  <LightbulbOutlined fontSize="small" />
+                                )}
+                              </IconButton>
+                            )}
+
                             {/* Always show speaker button for assistant (even when blurred) */}
                             {message.role === 'assistant' && (
                               <IconButton
@@ -852,6 +999,30 @@ export default function ChatPage() {
                               </IconButton>
                             )}
 
+                            {/* 사용자 최신 메시지: 피드백 버튼 */}
+                            {(() => {
+                              // 마지막 사용자 메시지 인덱스 찾기 (🎤 제외)
+                              const lastUserIdx = messages.reduce((acc, m, i) =>
+                                m.role === 'user' && !m.content.startsWith('🎤') ? i : acc, -1);
+                              return message.role === 'user' &&
+                                !message.content.startsWith('🎤') &&
+                                index === lastUserIdx;
+                            })() && (
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleRequestFeedback(index, message.content)}
+                                  disabled={feedbackLoading[index] || !!messageFeedback[index]}
+                                  title="피드백 요청"
+                                  sx={{ mt: 0.5 }}
+                                >
+                                  {feedbackLoading[index] ? (
+                                    <CircularProgress size={16} />
+                                  ) : (
+                                    <Feedback fontSize="small" color={messageFeedback[index] ? 'disabled' : 'primary'} />
+                                  )}
+                                </IconButton>
+                              )}
+
                             {message.role === 'user' && message.speakingTime && (
                               <Chip
                                 label={`${message.speakingTime.toFixed(1)}초`}
@@ -861,6 +1032,108 @@ export default function ChatPage() {
                               />
                             )}
                           </Box>
+                        }
+                        secondary={
+                          <>
+                            {/* 사용자 메시지: 피드백 결과 표시 */}
+                            {message.role === 'user' && messageFeedback[index] && (
+                              <Box sx={{ mt: 1, textAlign: 'right' }}>
+                                {messageFeedback[index].error ? (
+                                  <Alert severity="error" sx={{ textAlign: 'left' }}>
+                                    <Typography variant="caption">{messageFeedback[index].error}</Typography>
+                                  </Alert>
+                                ) : (
+                                  <Alert
+                                    severity="info"
+                                    sx={{
+                                      textAlign: 'left'
+                                    }}
+                                  >
+                                    {messageFeedback[index].correctedUserText && (
+                                      <Typography variant="caption" display="block" sx={{ mb: 0.5 }}>
+                                        <strong>교정:</strong> {messageFeedback[index].correctedUserText}
+                                      </Typography>
+                                    )}
+                                    {messageFeedback[index].feedback?.length > 0 && (
+                                      <Box sx={{ mb: 0.5 }}>
+                                        {messageFeedback[index].feedback.map((fb, i) => (
+                                          <Typography key={i} variant="caption" display="block">• {fb}</Typography>
+                                        ))}
+                                      </Box>
+                                    )}
+                                    {messageFeedback[index].suggestions?.length > 0 && (
+                                      <Box sx={{ mb: 0.5 }}>
+                                        <Typography variant="caption" display="block"><strong>대안 표현:</strong></Typography>
+                                        {messageFeedback[index].suggestions.map((sg, i) => (
+                                          <Chip
+                                            key={i}
+                                            label={sg}
+                                            size="small"
+                                            variant="outlined"
+                                            onClick={() => setInputText(sg)}
+                                            sx={{ cursor: 'pointer', mr: 0.5, mt: 0.5 }}
+                                          />
+                                        ))}
+                                      </Box>
+                                    )}
+                                    {messageFeedback[index].encouragement && (
+                                      <Typography variant="caption" color="success.main" display="block">
+                                        {messageFeedback[index].encouragement}
+                                      </Typography>
+                                    )}
+                                  </Alert>
+                                )}
+                              </Box>
+                            )}
+
+                            {/* AI 메시지: 추천 문장 (최신 메시지만) */}
+                            {message.role === 'assistant' &&
+                              !message.streaming &&
+                              index === messages.length - 1 &&
+                              suggestedReplies.length > 0 && (
+                                <Box sx={{ mt: 1 }}>
+                                  <Stack
+                                    direction="row"
+                                    spacing={0.5}
+                                    useFlexGap
+                                    flexWrap="wrap"
+                                    sx={{ mt: 0.5, alignItems: 'center' }}
+                                  >
+                                    {suggestedReplies.map((suggestion, idx) => (
+                                      <Chip
+                                        key={idx}
+                                        label={suggestion}
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => setInputText(suggestion)}
+                                        sx={{ cursor: 'pointer' }}
+                                      />
+                                    ))}
+                                  </Stack>
+                                </Box>
+                              )}
+
+                            {/* AI 메시지: 대화 종료 안내 (최신 메시지만) */}
+                            {message.role === 'assistant' &&
+                              !message.streaming &&
+                              index === messages.length - 1 &&
+                              conversationEnded && (
+                                <Box sx={{ mt: 1 }}>
+                                  <Alert severity="info" sx={{ textAlign: 'left' }}>
+                                    <Typography variant="body2" sx={{ mb: 1 }}>
+                                      대화가 종료되었습니다. 수고하셨습니다!
+                                    </Typography>
+                                    <Button
+                                      variant="outlined"
+                                      size="small"
+                                      onClick={() => navigate('/home')}
+                                    >
+                                      홈으로 돌아가기
+                                    </Button>
+                                  </Alert>
+                                </Box>
+                              )}
+                          </>
                         }
                       />
                     </ListItem>
@@ -873,11 +1146,11 @@ export default function ChatPage() {
               <CardContent sx={{ borderTop: 1, borderColor: 'divider' }}>
                 <Stack direction="row" spacing={1} alignItems="flex-end">
                   <IconButton
-                    color={isRecording ? 'error' : 'primary'}
+                    color={isRecordingNow ? 'error' : 'primary'}
                     onClick={handleMicToggle}
-                    disabled={isRecording ? isAILoading || isTranscribing || !conversationIdRef.current : isAILoading || isTranscribing || !conversationIdRef.current}
+                    disabled={conversationEnded || isAILoading || isTranscribing || !conversationIdRef.current || whisperStatus !== 'ready'}
                   >
-                    {isRecording ? <MicOff /> : <Mic />}
+                    {isRecordingNow ? <MicOff /> : <Mic />}
                   </IconButton>
 
                   <TextField
@@ -887,9 +1160,15 @@ export default function ChatPage() {
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
                     placeholder={
-                      isRecording ? '녹음 중...' : isTranscribing ? '음성 인식 중...' : '메시지를 입력하거나 마이크를 사용하세요'
+                      conversationEnded
+                        ? '대화가 종료되었습니다'
+                        : isRecordingNow
+                          ? '녹음 중...'
+                          : isTranscribing
+                            ? '음성 인식 중...'
+                            : '메시지를 입력하거나 마이크를 사용하세요'
                     }
-                    disabled={isRecording || isTranscribing || isAILoading || !conversationIdRef.current}
+                    disabled={conversationEnded || isRecordingNow || isTranscribing || isAILoading || !conversationIdRef.current}
                     onKeyPress={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
@@ -901,7 +1180,7 @@ export default function ChatPage() {
                   <IconButton
                     color="primary"
                     onClick={handleSendMessage}
-                    disabled={!inputText.trim() || isTranscribing || isAILoading || !conversationIdRef.current}
+                    disabled={conversationEnded || !inputText.trim() || isTranscribing || isAILoading || !conversationIdRef.current}
                   >
                     <Send />
                   </IconButton>
