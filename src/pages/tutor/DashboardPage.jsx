@@ -1,6 +1,6 @@
 // 튜터 실시간 모니터링 대시보드 (목업)
 
-import { useState } from 'react';
+import {useEffect, useState} from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -24,6 +24,7 @@ import {
   Warning,
 } from '@mui/icons-material';
 import TutorLayout from '../../components/common/TutorLayout';
+import {WS_URL} from "../../utils/constants.js";
 
 // 목업 학생 데이터
 const MOCK_STUDENTS = [
@@ -239,9 +240,63 @@ export default function DashboardPage() {
   const speakingStudents = students.filter(s => s.status === 'speaking');
   const warningStudents = students.filter(s => s.warning || s.alert);
 
+  // const [students, setStudents] = useState([]);
+  const [summary, setSummary] = useState({ total: 0, active: 0, speaking: 0, warning: 0 });
+  const [wsStatus, setWsStatus] = useState('connecting');
+  const [lastUpdate, setLastUpdate] = useState(null);
+
+
   const handleStudentClick = (email) => {
     navigate(`/tutor/students/${email}`);
   };
+
+  useEffect(() => {
+
+    console.log('🔌 WebSocket 연결 시도:', WS_URL);
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      console.log('✅ WebSocket 연결 성공');
+      setWsStatus('connected');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.log('📊 대시보드 업데이트 수신:', message);
+
+        if (message.type === 'dashboard_update') {
+          setStudents(message.students || []);
+          setSummary(message.summary || { total: 0, active: 0, speaking: 0, warning: 0 });
+          setLastUpdate(new Date(message.timestamp));
+
+          console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
+        }
+
+      } catch (error) {
+        console.error('❌ 메시지 파싱 에러:', error);
+      }
+
+      ws.onerror = (error) => {
+        console.error('❌ WebSocket 에러:', error);
+        setWsStatus('disconnected');
+      };
+
+      ws.onclose = () => {
+        console.log('🔌 WebSocket 연결 종료');
+        setWsStatus('disconnected');
+      };
+
+      return () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      };
+    };
+
+
+  },[]);
+
 
   return (
     <TutorLayout studentCount={students.length}>
