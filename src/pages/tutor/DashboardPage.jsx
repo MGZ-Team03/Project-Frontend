@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import {
   Box,
   Typography,
@@ -14,6 +15,14 @@ import {
   IconButton,
   LinearProgress,
   Tooltip,
+  TextField,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Alert,
+  Snackbar,
 } from '@mui/material';
 import {
   Circle,
@@ -22,85 +31,23 @@ import {
   MenuBook,
   Chat,
   Warning,
+  Send,
 } from '@mui/icons-material';
 import TutorLayout from '../../components/common/TutorLayout';
+import FeedbackNotification from '../../components/tutor/FeedbackNotification';
+import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
+import { sendFeedback } from '../../api/tutorFeedback';
 
 // 목업 학생 데이터
 const MOCK_STUDENTS = [
   {
-    email: 'park@student.com',
-    name: '박영어',
+    email: 'hwplus@gmail.com',
+    name: '홍길동',
     activity: 'sentence',
     status: 'speaking',
-    speakingRatio: 85,
-    duration: 12,
-    currentSentence: 'How are you doing today?',
-  },
-  {
-    email: 'kim@student.com',
-    name: '김스피킹',
-    activity: 'ai_chat',
-    status: 'speaking',
-    speakingRatio: 78,
-    duration: 23,
-    currentTopic: '카페 주문',
-  },
-  {
-    email: 'choi@student.com',
-    name: '최토익',
-    activity: 'sentence',
-    status: 'listening',
-    speakingRatio: 30,
-    duration: 8,
-    currentSentence: 'The weather is nice today.',
-    warning: true,
-  },
-  {
-    email: 'jung@student.com',
-    name: '정회화',
-    activity: null,
-    status: 'inactive',
-    speakingRatio: 0,
-    duration: 0,
-    lastActive: '5분 전',
-    alert: true,
-  },
-  {
-    email: 'lee@student.com',
-    name: '이잉글',
-    activity: 'ai_chat',
-    status: 'speaking',
-    speakingRatio: 72,
+    speakingRatio: 75,
     duration: 15,
-    currentTopic: '길 묻기',
-  },
-  {
-    email: 'han@student.com',
-    name: '한영희',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 80,
-    duration: 18,
-    currentSentence: 'I would like a cup of coffee.',
-  },
-  {
-    email: 'song@student.com',
-    name: '송민수',
-    activity: 'ai_chat',
-    status: 'listening',
-    speakingRatio: 45,
-    duration: 10,
-    currentTopic: '자기소개',
-    warning: true,
-  },
-  {
-    email: 'yoon@student.com',
-    name: '윤지민',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 90,
-    duration: 30,
-    currentSentence: 'Where is the nearest subway station?',
+    currentSentence: 'Hello, how are you today?',
   },
 ];
 
@@ -122,7 +69,7 @@ function getStatusLabel(status) {
   }
 }
 
-function StudentCard({ student, onClick }) {
+function StudentCard({ student, onClick, onFeedbackClick, tutorEmail, disabled, onQuickFeedbackSuccess, onQuickFeedbackError }) {
   const statusColor = getStatusColor(student.status);
 
   return (
@@ -134,7 +81,7 @@ function StudentCard({ student, onClick }) {
         borderColor: 'error.main',
         '&:hover': { boxShadow: 6 },
       }}
-      onClick={onClick}
+      onClick={() => onClick(student.email)}
     >
       <CardContent>
         <Stack direction="row" alignItems="center" spacing={2}>
@@ -205,12 +152,24 @@ function StudentCard({ student, onClick }) {
           {/* 액션 버튼 */}
           <Stack direction="row" spacing={0.5}>
             <Tooltip title="상세 보기">
-              <IconButton size="small" color="primary">
+              <IconButton 
+                size="small" 
+                color="primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClick(student.email);
+                }}
+              >
                 <Visibility fontSize="small" />
               </IconButton>
             </Tooltip>
             <Tooltip title="피드백 보내기">
-              <IconButton size="small" color="secondary">
+              <IconButton 
+                size="small" 
+                color="secondary"
+                onClick={(e) => onFeedbackClick(student, e)}
+                disabled={disabled}
+              >
                 <Message fontSize="small" />
               </IconButton>
             </Tooltip>
@@ -226,6 +185,15 @@ function StudentCard({ student, onClick }) {
             sx={{ mt: 1, height: 4, borderRadius: 2 }}
           />
         )}
+
+        {/* 빠른 피드백 */}
+        <QuickFeedbackChips
+          student={student}
+          tutorEmail={tutorEmail}
+          disabled={disabled}
+          onSuccess={onQuickFeedbackSuccess}
+          onError={onQuickFeedbackError}
+        />
       </CardContent>
     </Card>
   );
@@ -233,7 +201,21 @@ function StudentCard({ student, onClick }) {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const tutorEmail = useSelector(state => state.auth.user?.email) || 'hw_plus@naver.com';
+  
   const [students] = useState(MOCK_STUDENTS);
+  const [feedbackDialog, setFeedbackDialog] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [notification, setNotification] = useState(null);
+  const [sending, setSending] = useState(false);
+
+  // 세션 ID 생성 함수
+  const generateSessionId = (studentEmail) => {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    return `session_${timestamp}_${studentEmail.split('@')[0]}_${random}`;
+  };
 
   const activeStudents = students.filter(s => s.status !== 'inactive');
   const speakingStudents = students.filter(s => s.status === 'speaking');
@@ -242,6 +224,63 @@ export default function DashboardPage() {
   const handleStudentClick = (email) => {
     navigate(`/tutor/students/${email}`);
   };
+
+  // 피드백 다이얼로그 열기
+  const openFeedbackDialog = (student, event) => {
+    event?.stopPropagation();
+    setSelectedStudent(student);
+    setFeedbackText('');
+    setFeedbackDialog(true);
+  };
+
+  // 빠른 피드백 성공/실패 핸들러
+  const handleQuickFeedbackSuccess = (message) => {
+    setNotification({ message, severity: 'success' });
+  };
+
+  const handleQuickFeedbackError = (message) => {
+    setNotification({ message, severity: 'error' });
+  };
+
+  // 피드백 전송
+  const handleSendFeedback = async () => {
+    if (!feedbackText.trim()) {
+      setNotification({ message: '피드백 메시지를 입력해주세요.', severity: 'warning' });
+      return;
+    }
+
+    setSending(true);
+    try {
+      const sessionId = generateSessionId(selectedStudent.email);
+      const result = await sendFeedback({
+        tutor_email: tutorEmail,
+        student_email: selectedStudent.email,
+        message: feedbackText,
+        message_type: 'text',
+        session_id: sessionId
+      });
+
+      console.log('피드백 전송 결과:', result);
+
+      setNotification({
+        message: `피드백 전송 성공! ${result.websocket_sent ? '(실시간 전달됨)' : '(오프라인)'}`,
+        severity: 'success',
+      });
+
+      setFeedbackDialog(false);
+      setFeedbackText('');
+    } catch (error) {
+      console.error('피드백 전송 실패:', error);
+      setNotification({
+        message: '피드백 전송에 실패했습니다.',
+        severity: 'error',
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
+
 
   return (
     <TutorLayout studentCount={students.length}>
@@ -312,10 +351,62 @@ export default function DashboardPage() {
             <StudentCard
               key={student.email}
               student={student}
-              onClick={() => handleStudentClick(student.email)}
+              onClick={handleStudentClick}
+              onFeedbackClick={openFeedbackDialog}
+              tutorEmail={tutorEmail}
+              disabled={sending}
+              onQuickFeedbackSuccess={handleQuickFeedbackSuccess}
+              onQuickFeedbackError={handleQuickFeedbackError}
             />
           ))}
         </Stack>
+
+        {/* 피드백 다이얼로그 */}
+        <Dialog
+          open={feedbackDialog}
+          onClose={() => !sending && setFeedbackDialog(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>
+            📨 피드백 전송: {selectedStudent?.name}
+          </DialogTitle>
+          <DialogContent>
+            <TextField
+              autoFocus
+              fullWidth
+              multiline
+              rows={4}
+              placeholder="학생에게 전달할 피드백을 입력하세요..."
+              value={feedbackText}
+              onChange={(e) => setFeedbackText(e.target.value)}
+              disabled={sending}
+              sx={{ mt: 2 }}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              학생: {selectedStudent?.email}
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setFeedbackDialog(false)} disabled={sending}>
+              취소
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSendFeedback}
+              disabled={sending || !feedbackText.trim()}
+              startIcon={<Send />}
+            >
+              {sending ? '전송 중...' : '전송'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* 알림 */}
+        <FeedbackNotification
+          notification={notification}
+          onClose={() => setNotification(null)}
+        />
       </Box>
     </TutorLayout>
   );

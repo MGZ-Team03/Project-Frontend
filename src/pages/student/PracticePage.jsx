@@ -25,13 +25,14 @@ import {
   GridOn,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
+import { getFeedbackHistory } from '../../api/tutorFeedback';
 
 // Hooks
 import { useMediaPipe } from '../../hooks/conversation/useMediaPipe';
-import { useAudioDetection } from '../../hooks/conversation/useAudioDetection';
-import { useSpeakingTimer } from '../../hooks/conversation/useSpeakingTimer';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { useWhisperSTT } from '../../hooks/useWhisperSTT';
+import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
+import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 
 // API
 import { generatePracticeSentences } from '../../api/sentences';
@@ -43,7 +44,6 @@ import { validateSentence } from '../../utils/conversation/sentenceValidator';
 import { getScenarioById } from '../../data/conversation/scenarios';
 
 import ws from "../../config/webSocketConfig.js";
-import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 
 // Redux
 import {
@@ -60,6 +60,7 @@ import {
   getPaceRatioFeedback,
   getNetSpeakingDensityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
+import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
 
 // Prevent duplicate calls (StrictMode mount/unmount) + add simple cache
 const sentenceBatchInFlight = new Map(); // key -> Promise<string[]>
@@ -112,12 +113,11 @@ export default function PracticePage() {
 
   // Get difficulty from navigation state, default to '중'
   const difficulty = location.state?.difficulty || '중';
-  const topicId = location.state?.topicId || 'restaurant';
-  const topic = useMemo(() => getScenarioById(topicId) || getScenarioById('restaurant'), [topicId]);
+  const topicId = location.state?.topicId || 'small_talk';
+  const topic = useMemo(() => getScenarioById(topicId) || getScenarioById('small_talk'), [topicId]);
 
   // State
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [isRecording, setIsRecording] = useState(false);
   const [showMouthLandmarks, setShowMouthLandmarks] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
@@ -137,33 +137,109 @@ export default function PracticePage() {
     { showGrid, showMouthLandmarks }
   );
 
-  const { audioVolume, error: audioError, isInitialized: isAudioInit } =
-    useAudioDetection(isRecording);
-
-  const { totalTime, speakingTime, ratio, currentlySpeaking, resetTimers } =
-    useSpeakingTimer(isRecording, landmarksRef, audioVolume);
-
-  const { playText, stop, isPlaying: isSpeaking, error: ttsError, getAudioDuration } = useTTSAudio();
+  // Whisper STT (WebGPU 전용)
   const {
     transcribe: whisperTranscribe,
-    status: whisperStatus,
     error: whisperError,
-    progress: whisperProgress,
   } = useWhisperSTT();
+
+  // Redux에서 전역 Whisper 상태 가져오기
+  const whisperStatus = useSelector(selectWhisperPreloadStatus);
+
+  // Debug: record microphone in parallel so we can replay what was spoken
+
+  // Whisper recording (no parallel debug recording)
+  const [isWhisperRecording, setIsWhisperRecording] = useState(false);
+  const whisperStreamRef = useRef(null);
+  const whisperRecorderRef = useRef(null);
+  const whisperChunksRef = useRef([]);
+
+  // 세션 시간(통계용): 버튼 시작~끝 기준
+  const [totalTimeMs, setTotalTimeMs] = useState(0);
+  const [lastTotalDurationMs, setLastTotalDurationMs] = useState(0);
+  const [lastSpeechDurationMs, setLastSpeechDurationMs] = useState(0);
+
+  const resetTimers = () => {
+    setLastTotalDurationMs(0);
+    setLastSpeechDurationMs(0);
+  };
+
+  const { playText, stop, isPlaying: isSpeaking, error: ttsError, getAudioDuration } = useTTSAudio();
 
   // State - 발음 평가 및 STT
   const [evaluationResult, setEvaluationResult] = useState(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
   const recordingStartTimeRef = useRef(null);
   const recordingTimerRef = useRef(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [sttWarning, setSttWarning] = useState(null);
+  const stopDebounceTimerRef = useRef(null);
+
+  // buildSrgsFromSentence 제거됨 (WebSpeech 미사용)
+  function buildSrgsFromSentence_REMOVED(sentence) {
+    const s = String(sentence || '').trim();
+    if (!s) return null;
+    const sentenceItem = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const wordItems = uniq
+      .map((w) => w.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
+      .map((w) => `<item>${w}</item>`)
+      .join('');
+
+    return `<?xml version="1.0" encoding="utf-8"?>\n` +
+      `<grammar xmlns="http://www.w3.org/2001/06/grammar" xml:lang="en-US" version="1.0" root="root">\n` +
+      `  <rule id="root" scope="public">\n` +
+      `    <one-of>\n` +
+      `      <item>${sentenceItem}</item>\n` +
+      `      ${wordItems}\n` +
+      `    </one-of>\n` +
+      `  </rule>\n` +
+      `</grammar>`;
+  }
+
+  // 컴포넌트 unmount 시 타이머 정리
+  useEffect(() => {
+    return () => {
+      // 타이머 정리
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      if (stopDebounceTimerRef.current) {
+        clearTimeout(stopDebounceTimerRef.current);
+        stopDebounceTimerRef.current = null;
+      }
+
+      // Whisper recorder/stream cleanup
+      if (whisperRecorderRef.current && whisperRecorderRef.current.state === 'recording') {
+        try {
+          whisperRecorderRef.current.stop();
+        } catch (_) {
+          // ignore
+        }
+      }
+      whisperRecorderRef.current = null;
+      whisperChunksRef.current = [];
+      if (whisperStreamRef.current) {
+        whisperStreamRef.current.getTracks().forEach((t) => {
+          try {
+            t.enabled = false;
+          } catch (_) {
+            // ignore
+          }
+          try {
+            t.stop();
+          } catch (_) {
+            // ignore
+          }
+        });
+        whisperStreamRef.current = null;
+      }
+    };
+  }, []);
 
   // 녹음 제한 설정 (30초)
   const MAX_RECORDING_DURATION = 30 * 1000; // 30초
-  const MAX_AUDIO_SIZE = 5 * 1024 * 1024; // 5MB
 
   // Load/generate sentences by topic + difficulty
   useEffect(() => {
@@ -307,10 +383,6 @@ export default function PracticePage() {
         clearInterval(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
-      // 녹음 중이면 중지
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
       // videoRef가 이미 null이어도 streamRef로 안전하게 정리
       if (cameraStreamRef.current) {
         cameraStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -370,112 +442,158 @@ export default function PracticePage() {
   };
 
   const toggleRecording = async () => {
-    if (isRecording) {
-      // 녹음 중지
-      setIsRecording(false);
-      setRecordingDuration(0);
+    // STOP (Whisper)
+    if (isWhisperRecording) {
+      if (stopDebounceTimerRef.current) return;
+      stopDebounceTimerRef.current = setTimeout(() => {
+        try {
+          whisperRecorderRef.current?.stop?.();
+        } catch (_) {
+          // ignore
+        }
+        stopDebounceTimerRef.current = null;
+      }, 500);
+      return;
+    }
 
-      // 타이머 정리
+    setValidationResult(null);
+    setTranscript('');
+    setSttWarning(null);
+    setCanGoNext(false);
+    setEvaluationResult(null);
+    setRecordingDuration(0);
+    resetTimers();
+
+    recordingStartTimeRef.current = Date.now();
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    recordingTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - recordingStartTimeRef.current;
+      setRecordingDuration(elapsed);
+      if (elapsed >= MAX_RECORDING_DURATION) {
+        try {
+          whisperRecorderRef.current?.stop?.();
+        } catch (_) {
+          // ignore
+        }
+      }
+    }, 100);
+
+    try {
+      // Whisper path: record once, then transcribe (no parallel debug recording)
+      // Ensure debug recorder is off to avoid parallel mic usage
+      setIsTranscribing(false);
+
+      // Start recording now, and complete transcription in recorder.onstop (triggered by next toggleRecording STOP)
+      whisperChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      whisperStreamRef.current = stream;
+
+      const preferred = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+      const mimeType = preferred.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      whisperRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e?.data?.size > 0) whisperChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const blobType = mimeType || whisperChunksRef.current?.[0]?.type || 'audio/webm';
+        const audioBlob = new Blob(whisperChunksRef.current, { type: blobType });
+        whisperChunksRef.current = [];
+
+        // cleanup stream
+        if (whisperStreamRef.current) {
+          whisperStreamRef.current.getTracks().forEach((t) => {
+            try {
+              t.enabled = false;
+            } catch (_) {}
+            try {
+              t.stop();
+            } catch (_) {}
+          });
+          whisperStreamRef.current = null;
+        }
+        whisperRecorderRef.current = null;
+        setIsWhisperRecording(false);
+
+        const startedAt = recordingStartTimeRef.current || Date.now();
+        const durationMs = Math.max(0, Date.now() - startedAt);
+        setLastTotalDurationMs(durationMs);
+        setLastSpeechDurationMs(durationMs);
+        setTotalTimeMs((t) => t + durationMs);
+
+        setIsTranscribing(true);
+        try {
+          const whisperText = await whisperTranscribe(audioBlob, {
+            prompt: currentSentence?.text,
+            backend: 'webgpu',
+            vad: true,
+            trimThreshold: 0.003,
+            trimPaddingSec: 0.1,
+          });
+          const transcribedText = String(whisperText || '').trim();
+          if (!transcribedText) {
+            setTranscript('');
+            setSttWarning('STT 결과가 비었습니다. 다시 한 번 말해보세요.');
+            setEvaluationResult(null);
+            return;
+          }
+          setTranscript(transcribedText);
+
+          if (currentSentence) {
+            setIsEvaluating(true);
+            try {
+              const result = await evaluatePronunciation({
+                originalText: currentSentence.text,
+                transcribedText: transcribedText,
+                sentenceId: currentSentence.id,
+                audioDurationMs: durationMs,
+              });
+              setEvaluationResult(result.evaluation);
+            } catch (error) {
+              console.error('Pronunciation evaluation error:', error);
+              setEvaluationResult(null);
+            } finally {
+              setIsEvaluating(false);
+            }
+          }
+
+          dispatch(completePractice({ userSpeakingTime: durationMs }));
+        } catch (e) {
+          console.error('Whisper STT error:', e);
+          setTranscript('');
+          setSttWarning(e?.message || 'Whisper STT 오류가 발생했습니다.');
+        } finally {
+          setIsTranscribing(false);
+          if (recordingTimerRef.current) {
+            clearInterval(recordingTimerRef.current);
+            recordingTimerRef.current = null;
+          }
+          setRecordingDuration(0);
+        }
+      };
+
+      recorder.start();
+      setIsWhisperRecording(true);
+      // Whisper start returns immediately (recording ongoing)
+    } catch (error) {
+      console.error('Recording start error:', error);
+      setTranscript('');
+      setSttWarning(error?.message || '녹음 시작 오류가 발생했습니다.');
+      setIsTranscribing(false);
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
-
-      // MediaRecorder 중지
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-
-      // 녹음 종료 시 연습 완료 (Pace Ratio 계산)
-      dispatch(completePractice({ userSpeakingTime: speakingTime }));
-    } else {
-      // 녹음 시작
-      setValidationResult(null);
-      setTranscript('');
-      setCanGoNext(false);
-      setEvaluationResult(null);
       setRecordingDuration(0);
-      resetTimers();
-      audioChunksRef.current = [];
-      recordingStartTimeRef.current = Date.now();
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
-
-        // 녹음 시간 타이머 시작
-        recordingTimerRef.current = setInterval(() => {
-          const elapsed = Date.now() - recordingStartTimeRef.current;
-          setRecordingDuration(elapsed);
-
-          // 최대 시간 초과 시 자동 중지
-          if (elapsed >= MAX_RECORDING_DURATION) {
-            toggleRecording();
-          }
-        }, 100);
-
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            audioChunksRef.current.push(event.data);
-          }
-        };
-
-        mediaRecorder.onstop = async () => {
-          // 녹음 데이터를 Blob으로 변환
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-
-          // STT 처리
-          if (currentSentence && audioBlob.size > 0) {
-            // 파일 크기 체크
-            if (audioBlob.size > MAX_AUDIO_SIZE) {
-              console.error('Audio file too large:', audioBlob.size);
-              setTranscript('');
-              alert(`녹음 파일이 너무 큽니다 (${(audioBlob.size / 1024 / 1024).toFixed(1)}MB). 더 짧게 녹음해주세요.`);
-              stream.getTracks().forEach(track => track.stop());
-              return;
-            }
-
-            setIsTranscribing(true);
-            try {
-              const transcribedText = await whisperTranscribe(audioBlob);
-              setTranscript(transcribedText);
-
-              // 발음 평가
-              if (transcribedText) {
-                setIsEvaluating(true);
-                try {
-                  const result = await evaluatePronunciation({
-                    originalText: currentSentence.text,
-                    transcribedText: transcribedText,
-                    sentenceId: currentSentence.id,
-                    audioDurationMs: speakingTime,
-                  });
-                  setEvaluationResult(result.evaluation);
-                } catch (error) {
-                  console.error('Pronunciation evaluation error:', error);
-                  setEvaluationResult(null);
-                } finally {
-                  setIsEvaluating(false);
-                }
-              }
-            } catch (error) {
-              console.error('STT error:', error);
-              setTranscript('');
-            } finally {
-              setIsTranscribing(false);
-            }
-          }
-
-          // 스트림 정리
-          stream.getTracks().forEach(track => track.stop());
-        };
-
-        mediaRecorder.start();
-        setIsRecording(true);
-      } catch (error) {
-        console.error('Failed to start recording:', error);
-      }
     }
   };
 
@@ -484,8 +602,10 @@ export default function PracticePage() {
     return `${seconds}초`;
   };
 
+  const isRecordingNow = isWhisperRecording;
+
   return (
-    <StudentLayout todayTime={Math.floor(totalTime / 1000 / 60)}>
+    <StudentLayout todayTime={Math.floor(totalTimeMs / 1000 / 60)}>
       <Box sx={{ maxWidth: 1200, mx: 'auto', width: '100%' }}>
         {/* Permission Error */}
         {hasCameraPermission === false && (
@@ -511,9 +631,11 @@ export default function PracticePage() {
             TTS 오류: {ttsError}
           </Alert>
         )}
-        {(whisperStatus === 'loading' || whisperProgress) && !isTranscribing && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            STT 모델 {whisperProgress?.percent != null ? `다운로드 중... ${whisperProgress.percent}%` : '준비 중...'} (초기 1회 로딩)
+
+        {/* STT 상태 */}
+        {sttWarning && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            {sttWarning}
           </Alert>
         )}
         {whisperError && (
@@ -612,7 +734,7 @@ export default function PracticePage() {
                       variant="outlined"
                       startIcon={<SkipPrevious />}
                       onClick={handlePrev}
-                      disabled={currentIndex === 0 || isRecording}
+                      disabled={currentIndex === 0 || isRecordingNow}
                     >
                       이전
                     </Button>
@@ -628,19 +750,23 @@ export default function PracticePage() {
                       {isSpeaking ? '재생 중...' : '듣기'}
                     </Button>
                     <Button
-                      variant={isRecording ? 'contained' : 'outlined'}
-                      color={isRecording ? 'error' : 'primary'}
-                      startIcon={isRecording ? <MicOff /> : <Mic />}
+                      variant={isRecordingNow ? 'contained' : 'outlined'}
+                      color={isRecordingNow ? 'error' : 'primary'}
+                      startIcon={isRecordingNow ? <MicOff /> : <Mic />}
                       onClick={toggleRecording}
-                      disabled={!currentSentence}
+                      disabled={!currentSentence || whisperStatus !== 'ready'}
                     >
-                      {isRecording ? `중지 (${Math.floor((MAX_RECORDING_DURATION - recordingDuration) / 1000)}초)` : '녹음'}
+                      {whisperStatus === 'loading'
+                        ? '모델 로딩 중...'
+                        : isRecordingNow
+                          ? `중지 (${Math.floor((MAX_RECORDING_DURATION - recordingDuration) / 1000)}초)`
+                          : '녹음'}
                     </Button>
                     <Button
                       variant="outlined"
                       startIcon={<SkipNext />}
                       onClick={handleNext}
-                      disabled={currentIndex >= sentenceList.length - 1 || isRecording || !canGoNext}
+                      disabled={currentIndex >= sentenceList.length - 1 || isRecordingNow || !canGoNext}
                     >
                       다음
                     </Button>
@@ -719,9 +845,9 @@ export default function PracticePage() {
               {/* 발화 표시기 */}
               <Box sx={{ textAlign: 'center' }}>
                 <Chip
-                  icon={currentlySpeaking ? <Mic /> : <MicOff />}
-                  label={currentlySpeaking ? '🎤 발음 중...' : '준비'}
-                  color={currentlySpeaking ? 'success' : 'default'}
+                  icon={isWhisperRecording ? <Mic /> : <MicOff />}
+                  label={isWhisperRecording ? '🎤 녹음 중...' : '대기'}
+                  color={isWhisperRecording ? 'success' : 'default'}
                   sx={{ fontSize: '1rem', py: 2, px: 1 }}
                 />
               </Box>
@@ -730,7 +856,7 @@ export default function PracticePage() {
               <Stack direction="row" spacing={4} justifyContent="center">
                 <Box sx={{ textAlign: 'center' }}>
                   <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                    {formatTime(speakingTime)}
+                    {formatTime(lastSpeechDurationMs)}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     발음 시간
@@ -738,7 +864,7 @@ export default function PracticePage() {
                 </Box>
                 <Box sx={{ textAlign: 'center' }}>
                   <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                    {formatTime(totalTime)}
+                    {formatTime(lastTotalDurationMs)}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     전체 시간
@@ -746,7 +872,7 @@ export default function PracticePage() {
                 </Box>
                 <Box sx={{ textAlign: 'center' }}>
                   <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main' }}>
-                    {ratio}%
+                    {lastTotalDurationMs > 0 ? Math.round((lastSpeechDurationMs / lastTotalDurationMs) * 100) : 0}%
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     발음 비율
@@ -758,7 +884,7 @@ export default function PracticePage() {
               <Box>
                 <LinearProgress
                   variant="determinate"
-                  value={ratio}
+                  value={lastTotalDurationMs > 0 ? Math.round((lastSpeechDurationMs / lastTotalDurationMs) * 100) : 0}
                   sx={{
                     height: 10,
                     borderRadius: 5,
@@ -839,6 +965,9 @@ export default function PracticePage() {
         </Card>
 
       </Box>
+
+      {/* 튜터 피드백 오버레이 - 독립적 컴포넌트 */}
+      <TutorFeedbackOverlay />
     </StudentLayout>
   );
 }

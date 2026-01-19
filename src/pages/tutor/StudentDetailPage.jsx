@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import {
   Box,
   Typography,
@@ -23,6 +24,8 @@ import {
   TableHead,
   TableRow,
   Paper,
+  Alert,
+  Snackbar,
 } from '@mui/material';
 import {
   ArrowBack,
@@ -33,16 +36,19 @@ import {
   Chat,
 } from '@mui/icons-material';
 import TutorLayout from '../../components/common/TutorLayout';
+import FeedbackInput from '../../components/tutor/FeedbackInput';
+import FeedbackHistory from '../../components/tutor/FeedbackHistory';
+import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 
 // 목업 학생 상세 데이터
 const MOCK_STUDENT = {
-  email: 'choi@student.com',
-  name: '최토익',
+  email: 'hwplus@gmail.com',
+  name: '홍길동',
   activity: 'sentence',
-  status: 'listening',
-  speakingRatio: 30,
-  todayDuration: 8,
-  currentSentence: 'The weather is nice today.',
+  status: 'speaking',
+  speakingRatio: 75,
+  todayDuration: 15,
+  currentSentence: 'Hello, how are you today?',
 };
 
 // 목업 학습 이력
@@ -63,22 +69,20 @@ const MOCK_FEEDBACK = [
 export default function StudentDetailPage() {
   const { email } = useParams();
   const navigate = useNavigate();
-  const [feedbackText, setFeedbackText] = useState('');
+  const tutorEmail = useSelector(state => state.auth.user?.email);
+  
   const [feedbackHistory, setFeedbackHistory] = useState(MOCK_FEEDBACK);
+  const [notification, setNotification] = useState(null);
 
   const student = MOCK_STUDENT; // 실제로는 email로 조회
 
-  const handleSendFeedback = (type) => {
-    if (!feedbackText.trim()) return;
-
-    const newFeedback = {
-      time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-      type,
-      message: feedbackText,
-    };
-
+  const handleFeedbackSuccess = (message, newFeedback) => {
     setFeedbackHistory([newFeedback, ...feedbackHistory]);
-    setFeedbackText('');
+    setNotification({ message, severity: 'success' });
+  };
+
+  const handleFeedbackError = (message) => {
+    setNotification({ message, severity: 'error' });
   };
 
   const weeklyTotal = MOCK_HISTORY.reduce((sum, d) => sum + d.duration, 0);
@@ -178,68 +182,16 @@ export default function StudentDetailPage() {
                   💬 피드백 보내기
                 </Typography>
 
-                <TextField
-                  fullWidth
-                  multiline
+                <FeedbackInput
+                  tutorEmail={tutorEmail}
+                  studentEmail={student.email}
+                  onSuccess={handleFeedbackSuccess}
+                  onError={handleFeedbackError}
+                  showTTS={true}
                   rows={3}
-                  placeholder="학생에게 보낼 피드백을 입력하세요..."
-                  value={feedbackText}
-                  onChange={(e) => setFeedbackText(e.target.value)}
-                  sx={{ mb: 2 }}
                 />
 
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    variant="contained"
-                    startIcon={<Send />}
-                    onClick={() => handleSendFeedback('text')}
-                    disabled={!feedbackText.trim()}
-                  >
-                    텍스트 전송
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    startIcon={<VolumeUp />}
-                    onClick={() => handleSendFeedback('tts')}
-                    disabled={!feedbackText.trim()}
-                  >
-                    TTS 전송
-                  </Button>
-                </Stack>
-
-                {feedbackHistory.length > 0 && (
-                  <>
-                    <Divider sx={{ my: 2 }} />
-                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                      최근 피드백
-                    </Typography>
-                    <Stack spacing={1}>
-                      {feedbackHistory.slice(0, 3).map((fb, index) => (
-                        <Box 
-                          key={index}
-                          sx={{ 
-                            p: 1, 
-                            bgcolor: 'grey.100', 
-                            borderRadius: 1,
-                            fontSize: '0.875rem',
-                          }}
-                        >
-                          <Stack direction="row" spacing={1} alignItems="center">
-                            <Typography variant="caption" color="text.secondary">
-                              {fb.time}
-                            </Typography>
-                            <Chip 
-                              label={fb.type === 'tts' ? 'TTS' : '텍스트'} 
-                              size="small" 
-                              variant="outlined"
-                            />
-                          </Stack>
-                          <Typography variant="body2">{fb.message}</Typography>
-                        </Box>
-                      ))}
-                    </Stack>
-                  </>
-                )}
+                <FeedbackHistory feedbacks={feedbackHistory} maxDisplay={3} />
               </CardContent>
             </Card>
           </Grid>
@@ -304,6 +256,12 @@ export default function StudentDetailPage() {
             </Card>
           </Grid>
         </Grid>
+
+        {/* 알림 */}
+        <FeedbackNotification
+          notification={notification}
+          onClose={() => setNotification(null)}
+        />
       </Box>
     </TutorLayout>
   );

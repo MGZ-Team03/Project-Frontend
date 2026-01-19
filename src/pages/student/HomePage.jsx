@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import {useCallback, useState} from 'react';
+import { useSelector } from 'react-redux';
 import {
   Box,
   Card,
@@ -27,14 +28,16 @@ import StudentLayout from '../../components/common/StudentLayout';
 import { scenarios } from '../../data/conversation/scenarios';
 import {useSelector} from "react-redux";
 import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
+import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
 
 export default function HomePage() {
   const user = useSelector(state => state.auth.user);
   const navigate = useNavigate();
+  const whisperStatus = useSelector(selectWhisperPreloadStatus);
   const [practiceDifficulty, setPracticeDifficulty] = useState('중');
-  const [practiceTopicId, setPracticeTopicId] = useState('restaurant');
+  const [practiceTopicId, setPracticeTopicId] = useState('small_talk');
   const [chatDifficulty, setChatDifficulty] = useState('중');
-  const [chatScenario, setChatScenario] = useState('restaurant');
+  const [chatScenario, setChatScenario] = useState('small_talk');
 
 
   // 웹소켓 연결만 수행 (데이터 전송 없음)
@@ -257,6 +260,7 @@ export default function HomePage() {
               <Button
                 variant="contained"
                 fullWidth
+                disabled={whisperStatus !== 'ready'}
                 onClick={() =>
                   navigate('/practice', {
                     state: { difficulty: practiceDifficulty, topicId: practiceTopicId },
@@ -267,7 +271,7 @@ export default function HomePage() {
                   py: 1.5,
                 }}
               >
-                시작하기
+                {whisperStatus === 'loading' ? '음성인식 로드 중...' : '시작하기'}
               </Button>
             </CardContent>
           </Card>
@@ -339,6 +343,7 @@ export default function HomePage() {
               <Button
                 variant="contained"
                 fullWidth
+                disabled={whisperStatus !== 'ready'}
                 onClick={() => navigate('/chat', {
                   state: {
                     difficulty: chatDifficulty,
@@ -350,7 +355,7 @@ export default function HomePage() {
                   py: 1.5,
                 }}
               >
-                시작하기
+                {whisperStatus === 'loading' ? '음성인식 로드 중...' : '시작하기'}
               </Button>
             </CardContent>
           </Card>
