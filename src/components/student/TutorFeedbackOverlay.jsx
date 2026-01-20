@@ -27,6 +27,16 @@ import { useWebSocket } from '../../hooks/useWebSocket';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 
 /**
+ * 텍스트의 언어를 감지합니다 (한글 포함 여부 확인)
+ * @param {string} text
+ * @returns {'ko' | 'en'}
+ */
+function detectLanguage(text) {
+  // 한글 범위: U+AC00 ~ U+D7AF
+  return /[\uAC00-\uD7AF]/.test(text) ? 'ko' : 'en';
+}
+
+/**
  * 튜터 피드백 오버레이 컴포넌트
  * - ChatPage 우측 하단에 독립적으로 표시
  * - WebSocket을 통한 실시간 피드백 수신
@@ -104,7 +114,8 @@ export default function TutorFeedbackOverlay() {
       
       // TTS 자동 재생 (설정에 따라)
       if (autoPlayTTS && message.messageType === 'tts' && message.message) {
-        playText(message.message);
+        const language = detectLanguage(message.message);
+        playText(message.message, { language });
       }
     } else {
       console.warn('⚠️ 피드백 타입이 아닙니다:', {

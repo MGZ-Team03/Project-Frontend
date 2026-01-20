@@ -56,7 +56,7 @@ export function useTTSAudio() {
     };
   }, [stop]);
 
-  const playText = useCallback(async (text, { voiceId } = {}) => {
+  const playText = useCallback(async (text, { voiceId, language = 'en' } = {}) => {
     if (!text || typeof text !== 'string') return;
     setError(null);
 
@@ -76,6 +76,7 @@ export function useTTSAudio() {
           promise = requestTTS({
             text,
             voiceId,
+            language,
             pollingOptions: {
               onRetry: (attempt, maxAttempts) => {
                 // 폴링 진행 상태를 로그로 표시 (필요시 UI에 반영 가능)
