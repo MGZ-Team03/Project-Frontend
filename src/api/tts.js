@@ -16,14 +16,17 @@ async function checkTTSStatus(jobId) {
  * @param {Object} params
  * @param {string} params.text
  * @param {string=} params.voiceId
+ * @param {string=} params.language - 언어 ('ko' | 'en', 기본값: 'en')
  * @param {Object=} params.pollingOptions - 폴링 옵션 (선택)
  * @returns {Promise<{success:boolean,audioUrl:string,expiresIn?:number,cached?:boolean}>}
  */
-export async function requestTTS({ text, voiceId, pollingOptions = {} }) {
+export async function requestTTS({ text, voiceId, language = 'en', pollingOptions = {} }) {
   const payload = { text };
   if (voiceId) payload.voiceId = voiceId;
 
-  const res = await axios.post('/api/tts', payload);
+  // 언어에 따라 엔드포인트 분기. 한국어가 한 글자라도 들어가면 ko를 선택.
+  const endpoint = language === 'ko' ? '/api/tts/korean' : '/api/tts';
+  const res = await axios.post(endpoint, payload);
 
   // 캐시 히트 (200) - 즉시 반환
   if (res.status === 200) {
