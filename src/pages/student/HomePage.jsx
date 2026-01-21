@@ -25,6 +25,7 @@ import {
   TrendingUp,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
+import TutorSearchDialog from '../../components/student/TutorSearchDialog';
 import { scenarios } from '../../data/conversation/scenarios';
 import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
@@ -37,6 +38,7 @@ export default function HomePage() {
   const [practiceTopicId, setPracticeTopicId] = useState('small_talk');
   const [chatDifficulty, setChatDifficulty] = useState('중');
   const [chatScenario, setChatScenario] = useState('small_talk');
+  const [tutorSearchOpen, setTutorSearchOpen] = useState(false);
 
 
   // 웹소켓 연결만 수행 (데이터 전송 없음)
@@ -82,8 +84,9 @@ export default function HomePage() {
   };
 
   return (
-    <StudentLayout todayTime={todayStats.totalTime}>
-      <Box sx={{ maxWidth: 800, mx: 'auto', width: '100%' }}>
+    <>
+      <StudentLayout todayTime={todayStats.totalTime} onTutorSearchClick={() => setTutorSearchOpen(true)}>
+        <Box sx={{ maxWidth: 800, mx: 'auto', width: '100%' }}>
         {/* 환영 메시지 */}
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
@@ -374,5 +377,12 @@ export default function HomePage() {
         </Card>
       </Box>
     </StudentLayout>
+
+    {/* 튜터 검색 다이얼로그 */}
+    <TutorSearchDialog
+      open={tutorSearchOpen}
+      onClose={() => setTutorSearchOpen(false)}
+    />
+    </>
   );
 }

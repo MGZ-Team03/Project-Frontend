@@ -9,7 +9,7 @@ import {
   selectWhisperProgress,
 } from '../../store/slices/whisperPreloadSlice';
 
-export default function StudentLayout({ children, todayTime = 0 }) {
+export default function StudentLayout({ children, todayTime = 0, onTutorSearchClick }) {
   const { preloadGlobal } = useWhisperGlobalPreload();
   const whisperStatus = useSelector(selectWhisperPreloadStatus);
   const whisperProgress = useSelector(selectWhisperProgress);
@@ -21,7 +21,7 @@ export default function StudentLayout({ children, todayTime = 0 }) {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: '#f5f5f5' }}>
-      <Header todayTime={todayTime} />
+      <Header todayTime={todayTime} onTutorSearchClick={onTutorSearchClick} />
 
       {/* Whisper 로딩 배너 - loading 상태일 때만 표시 */}
       {whisperStatus === 'loading' && (

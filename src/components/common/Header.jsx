@@ -8,9 +8,9 @@ import {
   Button,
   Chip,
 } from '@mui/material';
-import { Logout, School, Person } from '@mui/icons-material';
+import { Logout, School, Person, PersonAdd } from '@mui/icons-material';
 
-export default function Header({ todayTime = 0, studentCount = 0 }) {
+export default function Header({ todayTime = 0, studentCount = 0, onTutorSearchClick }) {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
@@ -60,6 +60,18 @@ export default function Header({ todayTime = 0, studentCount = 0 }) {
             variant="outlined"
             sx={{ mr: 'auto' }}
           />
+        )}
+
+        {/* 학생 전용: 튜터 찾기 버튼 */}
+        {isStudent && onTutorSearchClick && (
+          <Button
+            variant="contained"
+            startIcon={<PersonAdd />}
+            onClick={onTutorSearchClick}
+            sx={{ mr: 2 }}
+          >
+            튜터 찾기
+          </Button>
         )}
 
         <Chip 
