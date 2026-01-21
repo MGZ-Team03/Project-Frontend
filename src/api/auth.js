@@ -49,6 +49,35 @@ export const logout = () => {
   localStorage.removeItem('user');
 };
 
+// RefreshToken을 사용하여 새로운 토큰 발급
+export const refreshAccessToken = async () => {
+  const refreshToken = localStorage.getItem('refreshToken');
+  
+  if (!refreshToken) {
+    throw new Error('No refresh token available');
+  }
+  
+  try {
+    const response = await axios.post('/api/auth/refresh', {
+      refreshToken
+    });
+    
+    // 새로운 토큰 저장
+    if (response.data.idToken) {
+      localStorage.setItem('idToken', response.data.idToken);
+      localStorage.setItem('accessToken', response.data.accessToken);
+      // refreshToken은 동일하게 유지되므로 갱신 불필요
+    }
+    
+    return response.data;
+  } catch (error) {
+    // RefreshToken도 만료되었거나 유효하지 않으면 로그아웃
+    console.error('Token refresh failed:', error);
+    logout();
+    throw error;
+  }
+};
+
 // 학생의 튜터 정보 가져오기
 export const getMyTutor = async (studentEmail) => {
   try {
@@ -80,9 +109,18 @@ export const getCurrentUser = async () => {
     
     const payload = JSON.parse(atob(parts[1]));
     
+    // 토큰 만료 시 RefreshToken으로 갱신 시도
     if (payload.exp * 1000 < Date.now()) {
-      logout();
-      return null;
+      try {
+        console.log('Token expired, attempting refresh...');
+        await refreshAccessToken();
+        // 갱신 성공 시 다시 getCurrentUser 재귀 호출
+        return await getCurrentUser();
+      } catch (error) {
+        console.error('Token refresh failed, logging out');
+        logout();
+        return null;
+      }
     }
     
     // DynamoDB에서 전체 사용자 정보 조회 (role 포함)
