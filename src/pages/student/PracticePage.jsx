@@ -81,7 +81,7 @@ export default function PracticePage() {
     return {
       action: "status",
       data:{
-        tutorEmail: user.tutorEmail || "unknown@example.com",
+        tutorEmail: user.tutorEmail || "ssdii44@naver.com",
         studentEmail: user.email,
         status: "active",
         room: "sentence",
