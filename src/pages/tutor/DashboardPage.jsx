@@ -21,8 +21,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Alert,
-  Snackbar,
 } from '@mui/material';
 import {
   Circle,
@@ -40,17 +38,17 @@ import { sendFeedback } from '../../api/tutorFeedback';
 import {WS_URL} from "../../utils/constants.js";
 
 // 목업 학생 데이터
-const MOCK_STUDENTS = [
-  {
-    email: 'hwplus@gmail.com',
-    name: '홍길동',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 75,
-    duration: 15,
-    currentSentence: 'Hello, how are you today?',
-  },
-];
+// const MOCK_STUDENTS = [
+//   {
+//     email: 'hwplus@gmail.com',
+//     name: '홍길동',
+//     activity: 'sentence',
+//     status: 'speaking',
+//     speakingRatio: 75,
+//     duration: 15,
+//     currentSentence: 'Hello, how are you today?',
+//   },
+// ];
 
 function getStatusColor(status) {
   switch (status) {
@@ -206,7 +204,7 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const tutorEmail = useSelector(state => state.auth.user?.email) || 'hw_plus@naver.com';
   
-  const [students,setStudents] = useState(MOCK_STUDENTS);
+  const [students,setStudents] = useState([]);
   const [feedbackDialog, setFeedbackDialog] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [feedbackText, setFeedbackText] = useState('');
@@ -373,7 +371,7 @@ export default function DashboardPage() {
                   {speakingStudents.length}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  발음 중
+                  학습 중
                 </Typography>
               </CardContent>
             </Card>
