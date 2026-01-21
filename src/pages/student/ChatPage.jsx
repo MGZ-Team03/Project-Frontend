@@ -140,7 +140,7 @@ export default function ChatPage() {
   const [showMouthLandmarks, setShowMouthLandmarks] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(null);
-  const [permissionError, setPermissionError] = useState(null);
+  const [ setPermissionError] = useState(null);
   const [isChatInitLoading, setIsChatInitLoading] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sttError, setSttError] = useState(null);
@@ -164,7 +164,7 @@ export default function ChatPage() {
     return {
       action: "status",
       data: {
-        tutorEmail: user.tutorEmail || "unknown@example.com",
+        tutorEmail: user.tutorEmail || "ssdii44@naver.com",
         studentEmail: user.email,
         status: "active",
         room: "ai",  // 대화는 "ai"
@@ -180,8 +180,7 @@ export default function ChatPage() {
     enableInterval: true,
     interval: 5000
   });
-// ✅ 함수 자체를 전달 (실행하지 않음!)
-  useWebSocket(getData);
+
 
   // Redux에서 전역 Whisper 상태 가져오기
   const whisperStatus = useSelector(selectWhisperPreloadStatus);

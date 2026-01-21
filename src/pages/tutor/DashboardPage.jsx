@@ -1,6 +1,6 @@
 // 튜터 실시간 모니터링 대시보드 (목업)
 
-import { useState } from 'react';
+import {useEffect, useState} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
@@ -21,8 +21,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Alert,
-  Snackbar,
 } from '@mui/material';
 import {
   Circle,
@@ -37,25 +35,27 @@ import TutorLayout from '../../components/common/TutorLayout';
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
 import { sendFeedback } from '../../api/tutorFeedback';
+import {WS_URL} from "../../utils/constants.js";
 
 // 목업 학생 데이터
-const MOCK_STUDENTS = [
-  {
-    email: 'hwplus@gmail.com',
-    name: '홍길동',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 75,
-    duration: 15,
-    currentSentence: 'Hello, how are you today?',
-  },
-];
+// const MOCK_STUDENTS = [
+//   {
+//     email: 'hwplus@gmail.com',
+//     name: '홍길동',
+//     activity: 'sentence',
+//     status: 'speaking',
+//     speakingRatio: 75,
+//     duration: 15,
+//     currentSentence: 'Hello, how are you today?',
+//   },
+// ];
 
 function getStatusColor(status) {
   switch (status) {
-    case 'speaking': return 'success';
-    case 'listening': return 'warning';
-    case 'inactive': return 'error';
+    case 'speaking': return 'success';   // 🟢 발음 중
+    case 'listening': return 'warning';  // 🟠 듣기만
+    case 'idle': return 'error';         // 🔴 미활동 (개입 필요!)
+    case 'inactive': return 'default';   // ⚪ 오프라인
     default: return 'default';
   }
 }
@@ -64,7 +64,8 @@ function getStatusLabel(status) {
   switch (status) {
     case 'speaking': return '발음 중';
     case 'listening': return '듣기만';
-    case 'inactive': return '미활동';
+    case 'idle': return '미활동';         // 빨강 (개입 필요)
+    case 'inactive': return '오프라인';   // 회색
     default: return '오프라인';
   }
 }
@@ -109,7 +110,7 @@ function StudentCard({ student, onClick, onFeedbackClick, tutorEmail, disabled, 
                   <Warning color="warning" sx={{ fontSize: 18 }} />
                 </Tooltip>
               )}
-              {student.alert && (
+              {student.alert && student.status !== 'inactive' && (
                 <Chip label="개입 필요" size="small" color="error" />
               )}
             </Stack>
@@ -203,12 +204,75 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const tutorEmail = useSelector(state => state.auth.user?.email) || 'hw_plus@naver.com';
   
-  const [students] = useState(MOCK_STUDENTS);
+  const [students,setStudents] = useState([]);
   const [feedbackDialog, setFeedbackDialog] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [feedbackText, setFeedbackText] = useState('');
   const [notification, setNotification] = useState(null);
   const [sending, setSending] = useState(false);
+
+  const [summary, setSummary] = useState({ total: 0, active: 0, speaking: 0, warning: 0 });
+  const [wsStatus, setWsStatus] = useState('connecting');
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const user = useSelector(state => state.auth.user);
+
+  console.log("user auth : " + JSON.stringify(user));
+  useEffect(() => {
+
+    console.log('🔌 WebSocket 연결 시도:', WS_URL);
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      console.log('✅ WebSocket 연결 성공');
+      setWsStatus('connected');
+
+      const authMessage = {
+        action: "dashboard",
+        name: user.name,
+        tutorEmail: user.email,
+      };
+      if(user.role === "tutor"){
+        console.log("auth:",authMessage)
+        console.log('📤 인증 메시지 전송:', authMessage);
+        ws.send(JSON.stringify(authMessage));
+        setWsStatus('connected');
+      }
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.log('📊 대시보드 업데이트 수신:', message);
+
+        if (message.type === 'dashboard_update') {
+          setStudents(message.students || []);
+          setSummary(message.summary || { total: 0, active: 0, speaking: 0, warning: 0 });
+          setLastUpdate(new Date(message.timestamp));
+
+          console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
+        }
+
+      } catch (error) {
+        console.error('❌ 메시지 파싱 에러:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('❌ WebSocket 에러:', error);
+      setWsStatus('disconnected');
+    };
+
+    ws.onclose = () => {
+      console.log('🔌 WebSocket 연결 종료');
+      setWsStatus('disconnected');
+    };
+
+    return () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
+  }, []);
 
   // 세션 ID 생성 함수
   const generateSessionId = (studentEmail) => {
@@ -220,6 +284,7 @@ export default function DashboardPage() {
   const activeStudents = students.filter(s => s.status !== 'inactive');
   const speakingStudents = students.filter(s => s.status === 'speaking');
   const warningStudents = students.filter(s => s.warning || s.alert);
+
 
   const handleStudentClick = (email) => {
     navigate(`/tutor/students/${email}`);
@@ -306,7 +371,7 @@ export default function DashboardPage() {
                   {speakingStudents.length}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  발음 중
+                  학습 중
                 </Typography>
               </CardContent>
             </Card>
@@ -335,6 +400,7 @@ export default function DashboardPage() {
             <Circle sx={{ fontSize: 10, color: 'warning.main' }} />
             <Typography variant="caption">발음 비율 낮음</Typography>
           </Stack>
+
           <Stack direction="row" alignItems="center" spacing={0.5}>
             <Circle sx={{ fontSize: 10, color: 'error.main' }} />
             <Typography variant="caption">미활동</Typography>
