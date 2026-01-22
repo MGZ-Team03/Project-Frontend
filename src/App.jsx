@@ -6,6 +6,9 @@ import { store } from './store';
 import { checkAuth } from './store/slices/authSlice';
 import { loadStatsFromStorage } from './store/slices/speakingStatsSlice';
 
+// Pages - Public
+import LandingPage from './pages/public/LandingPage';
+
 // Pages - Student
 import LoginPage from './pages/LoginPage';
 import SignUpPage from './pages/SignUpPage';
@@ -42,6 +45,7 @@ function AppContent() {
 
   return (
     <Routes>
+      {/* Public Pages */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignUpPage />} />
 
@@ -64,6 +68,11 @@ function AppContent() {
       <Route path="/stats" element={
         <ProtectedRoute allowedRoles={['student']}>
           <StatsPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/introduce" element={
+        <ProtectedRoute allowedRoles={['student']}>
+          <LandingPage />
         </ProtectedRoute>
       } />
 
