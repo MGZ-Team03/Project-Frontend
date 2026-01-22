@@ -3,6 +3,7 @@
 import {useEffect, useState} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import {
   Box,
   Typography,
@@ -34,21 +35,10 @@ import {
 import TutorLayout from '../../components/common/TutorLayout';
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
-import { sendFeedback } from '../../api/tutorFeedback';
-import {WS_URL} from "../../utils/constants.js";
-
-// 목업 학생 데이터
-// const MOCK_STUDENTS = [
-//   {
-//     email: 'hwplus@gmail.com',
-//     name: '홍길동',
-//     activity: 'sentence',
-//     status: 'speaking',
-//     speakingRatio: 75,
-//     duration: 15,
-//     currentSentence: 'Hello, how are you today?',
-//   },
-// ];
+import NotificationDialog from '../../components/tutor/NotificationDialog';
+import { sendFeedback, getMyStudents } from '../../api/tutorFeedback';
+import { getNotifications } from '../../api/notifications';
+import { getTutorRequests } from '../../api/tutorRegister';
 
 function getStatusColor(status) {
   switch (status) {
@@ -204,75 +194,106 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const tutorEmail = useSelector(state => state.auth.user?.email);
   
-  const [students,setStudents] = useState([]);
+  // 학생 목록 (승인된 학생만)
+  const [students, setStudents] = useState([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  
   const [feedbackDialog, setFeedbackDialog] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [feedbackText, setFeedbackText] = useState('');
   const [notification, setNotification] = useState(null);
   const [sending, setSending] = useState(false);
 
-  const [summary, setSummary] = useState({ total: 0, active: 0, speaking: 0, warning: 0 });
-  const [wsStatus, setWsStatus] = useState('connecting');
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const user = useSelector(state => state.auth.user);
+  // 알림 관리
+  const [notifications, setNotifications] = useState([]);
+  const [notificationDialog, setNotificationDialog] = useState(false);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
 
-  console.log("user auth : " + JSON.stringify(user));
+  // 승인된 학생 목록 불러오기
+  const loadStudents = async () => {
+    try {
+      setLoadingStudents(true);
+      const response = await getMyStudents();
+      
+      // 백엔드 응답 구조에 맞게 파싱
+      const studentList = response.data?.students || response.students || [];
+      
+      // 학생 데이터를 대시보드 형식으로 변환
+      const formattedStudents = studentList.map(s => ({
+        email: s.studentEmail || s.student_email || s.email,
+        name: s.studentName || s.student_name || s.name || '이름 없음',
+        activity: null,  // WebSocket으로 실시간 업데이트
+        status: 'inactive',  // 기본값, WebSocket으로 업데이트
+        speakingRatio: 0,
+        duration: 0,
+        currentSentence: '',
+        assignedAt: s.assignedAt || s.assigned_at,
+      }));
+      
+      setStudents(formattedStudents);
+    } catch (error) {
+      console.error('학생 목록 로드 실패:', error);
+      setStudents([]);
+    } finally {
+      setLoadingStudents(false);
+    }
+  };
+
+  // 알림 목록 불러오기 (notifications API 사용)
+  const loadNotifications = async () => {
+    try {
+      setLoadingNotifications(true);
+      
+      // 안 읽은 알림만 조회 (백엔드에서 pending 상태 필터링됨)
+      const response = await getNotifications(false);
+      
+      // 백엔드 응답: { data: { notifications: [...], unreadCount: n } }
+      setNotifications(response.data?.notifications || []);
+    } catch (error) {
+      console.error('알림 로드 실패:', error);
+      // 에러 발생 시에도 빈 배열 설정
+      setNotifications([]);
+    } finally {
+      setLoadingNotifications(false);
+    }
+  };
+
+  // 컴포넌트 마운트 시 알림 및 학생 목록 로드
   useEffect(() => {
+    loadNotifications();
+    loadStudents();
+  }, [tutorEmail]);
 
-    console.log('🔌 WebSocket 연결 시도:', WS_URL);
-    const ws = new WebSocket(WS_URL);
-
-    ws.onopen = () => {
-      console.log('✅ WebSocket 연결 성공');
-      setWsStatus('connected');
-
-      const authMessage = {
-        action: "dashboard",
-        name: user.name,
-        tutorEmail: user.email,
-      };
-      if(user.role === "tutor"){
-        console.log("auth:",authMessage)
-        console.log('📤 인증 메시지 전송:', authMessage);
-        ws.send(JSON.stringify(authMessage));
-        setWsStatus('connected');
+  // WebSocket 연결 - 튜터 등록 요청 알림 수신
+  const { isConnected, error: wsError } = useWebSocket(
+    tutorEmail,
+    null, // 튜터는 tutor_email 파라미터 불필요
+    (data) => {
+      // 새로운 튜터 등록 요청 알림
+      if (data.type === 'NEW_TUTOR_REQUEST') {
+        setNotification({
+          message: `${data.data.student_name}님이 등록 요청을 보냈습니다!`,
+          severity: 'info'
+        });
+        
+        // 실시간으로 알림 추가 (백엔드 API 없이 WebSocket 데이터로 직접 추가)
+        const newNotification = {
+          notification_id: data.data.request_id,
+          type: 'NEW_TUTOR_REQUEST',
+          data: data.data,
+          created_at: data.data.created_at || Date.now(),
+          read: false,
+        };
+        
+        setNotifications(prev => [newNotification, ...prev]);
       }
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        console.log('📊 대시보드 업데이트 수신:', message);
-
-        if (message.type === 'dashboard_update') {
-          setStudents(message.students || []);
-          setSummary(message.summary || { total: 0, active: 0, speaking: 0, warning: 0 });
-          setLastUpdate(new Date(message.timestamp));
-
-          console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
-        }
-
-      } catch (error) {
-        console.error('❌ 메시지 파싱 에러:', error);
+      
+      // 기타 알림 타입 처리
+      if (data.type === 'FEEDBACK_RECEIVED' || data.type === 'SESSION_UPDATE') {
+        // 기존 알림 처리 로직
       }
-    };
-
-    ws.onerror = (error) => {
-      console.error('❌ WebSocket 에러:', error);
-      setWsStatus('disconnected');
-    };
-
-    ws.onclose = () => {
-      console.log('🔌 WebSocket 연결 종료');
-      setWsStatus('disconnected');
-    };
-
-    return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    };
-  }, []);
+    }
+  );
 
   // 세션 ID 생성 함수
   const generateSessionId = (studentEmail) => {
@@ -325,8 +346,6 @@ export default function DashboardPage() {
         session_id: sessionId
       });
 
-      console.log('피드백 전송 결과:', result);
-
       setNotification({
         message: `피드백 전송 성공! ${result.websocket_sent ? '(실시간 전달됨)' : '(오프라인)'}`,
         severity: 'success',
@@ -345,10 +364,15 @@ export default function DashboardPage() {
     }
   };
 
-
+  // 읽지 않은 알림 개수
+  const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
-    <TutorLayout studentCount={students.length}>
+    <TutorLayout 
+      studentCount={students.length}
+      onNotificationClick={() => setNotificationDialog(true)}
+      unreadNotificationCount={unreadCount}
+    >
       <Box sx={{ maxWidth: 900, mx: 'auto', width: '100%' }}>
         {/* 요약 통계 */}
         <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -413,18 +437,37 @@ export default function DashboardPage() {
         </Typography>
 
         <Stack spacing={2}>
-          {students.map((student) => (
-            <StudentCard
-              key={student.email}
-              student={student}
-              onClick={handleStudentClick}
-              onFeedbackClick={openFeedbackDialog}
-              tutorEmail={tutorEmail}
-              disabled={sending}
-              onQuickFeedbackSuccess={handleQuickFeedbackSuccess}
-              onQuickFeedbackError={handleQuickFeedbackError}
-            />
-          ))}
+          {loadingStudents ? (
+            <Card elevation={2}>
+              <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                <Typography color="text.secondary">학생 목록을 불러오는 중...</Typography>
+              </CardContent>
+            </Card>
+          ) : students.length === 0 ? (
+            <Card elevation={2}>
+              <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                <Typography color="text.secondary">
+                  아직 승인된 학생이 없습니다.
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  학생의 등록 요청을 승인하면 여기에 표시됩니다.
+                </Typography>
+              </CardContent>
+            </Card>
+          ) : (
+            students.map((student) => (
+              <StudentCard
+                key={student.email}
+                student={student}
+                onClick={handleStudentClick}
+                onFeedbackClick={openFeedbackDialog}
+                tutorEmail={tutorEmail}
+                disabled={sending}
+                onQuickFeedbackSuccess={handleQuickFeedbackSuccess}
+                onQuickFeedbackError={handleQuickFeedbackError}
+              />
+            ))
+          )}
         </Stack>
 
         {/* 피드백 다이얼로그 */}
@@ -467,6 +510,18 @@ export default function DashboardPage() {
             </Button>
           </DialogActions>
         </Dialog>
+
+        {/* 튜터 등록 요청 알림 다이얼로그 */}
+        <NotificationDialog
+          open={notificationDialog}
+          onClose={() => {
+            setNotificationDialog(false);
+            // 모달 닫을 때 학생 목록 갱신 (승인된 학생 반영)
+            loadStudents();
+          }}
+          notifications={notifications}
+          onUpdate={loadNotifications}
+        />
 
         {/* 알림 */}
         <FeedbackNotification
