@@ -7,10 +7,18 @@ import {
   Typography,
   Button,
   Chip,
+  IconButton,
+  Badge,
 } from '@mui/material';
-import { Logout, School, Person, PersonAdd } from '@mui/icons-material';
+import { Logout, School, Person, PersonAdd, Notifications } from '@mui/icons-material';
 
-export default function Header({ todayTime = 0, studentCount = 0, onTutorSearchClick }) {
+export default function Header({ 
+  todayTime = 0, 
+  studentCount = 0, 
+  onTutorSearchClick,
+  onNotificationClick,
+  unreadNotificationCount = 0,
+}) {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
@@ -72,6 +80,19 @@ export default function Header({ todayTime = 0, studentCount = 0, onTutorSearchC
           >
             튜터 찾기
           </Button>
+        )}
+
+        {/* 튜터 전용: 알림 아이콘 */}
+        {isTutor && onNotificationClick && (
+          <IconButton
+            onClick={onNotificationClick}
+            sx={{ mr: 1 }}
+            color="primary"
+          >
+            <Badge badgeContent={unreadNotificationCount} color="error">
+              <Notifications />
+            </Badge>
+          </IconButton>
         )}
 
         <Chip 

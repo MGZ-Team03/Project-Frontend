@@ -59,3 +59,13 @@ export const rejectTutorRequest = async (requestId, reason = '') => {
   });
   return response.data;
 };
+
+// 튜터용: 요청 처리 (승인/거부)
+export const processTutorRequest = async (requestId, action, reason = '') => {
+  if (action === 'approve') {
+    return await approveTutorRequest(requestId);
+  } else if (action === 'reject') {
+    return await rejectTutorRequest(requestId, reason);
+  }
+  throw new Error('Invalid action. Use "approve" or "reject"');
+};

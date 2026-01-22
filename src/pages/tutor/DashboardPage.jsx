@@ -1,8 +1,9 @@
 // 튜터 실시간 모니터링 대시보드 (목업)
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import {
   Box,
   Typography,
@@ -36,7 +37,10 @@ import {
 import TutorLayout from '../../components/common/TutorLayout';
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
+import NotificationDialog from '../../components/tutor/NotificationDialog';
 import { sendFeedback } from '../../api/tutorFeedback';
+import { getNotifications } from '../../api/notifications';
+import { getTutorRequests } from '../../api/tutorRegister';
 
 // 목업 학생 데이터
 const MOCK_STUDENTS = [
@@ -210,6 +214,92 @@ export default function DashboardPage() {
   const [notification, setNotification] = useState(null);
   const [sending, setSending] = useState(false);
 
+  // 알림 관리
+  const [notifications, setNotifications] = useState([]);
+  const [notificationDialog, setNotificationDialog] = useState(false);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+
+  // 알림 목록 불러오기 (tutor_requests 테이블에서 직접 조회)
+  const loadNotifications = async () => {
+    try {
+      setLoadingNotifications(true);
+      const response = await getTutorRequests('pending');
+      
+      // 백엔드 응답 구조: { data: { requests: [...], totalPending: n }, error: null, message: null }
+      const requestsList = response?.data?.requests || [];
+      
+      // requests 배열을 notifications 형식으로 변환
+      const formattedRequests = requestsList.map(req => ({
+        type: 'NEW_TUTOR_REQUEST',
+        data: {
+          request_id: req.requestId,
+          student_email: req.studentEmail,
+          student_name: req.studentName,
+          message: req.message,
+          created_at: req.createdAt
+        },
+        read: false,
+        created_at: req.createdAt
+      }));
+      
+      setNotifications(formattedRequests);
+    } catch (error) {
+      console.error('알림 로드 실패:', error);
+      // 에러 발생 시에도 빈 배열 설정
+      setNotifications([]);
+    } finally {
+      setLoadingNotifications(false);
+    }
+  };
+
+  // 컴포넌트 마운트 시 알림 로드
+  useEffect(() => {
+    loadNotifications();
+  }, [tutorEmail]);
+
+  // WebSocket 연결 - 튜터 등록 요청 알림 수신
+  const { isConnected, error: wsError } = useWebSocket(
+    tutorEmail,
+    null, // 튜터는 tutor_email 파라미터 불필요
+    (data) => {
+      console.log('📩 튜터 알림 수신:', data);
+      
+      // 새로운 튜터 등록 요청 알림
+      if (data.type === 'NEW_TUTOR_REQUEST') {
+        setNotification({
+          message: `${data.data.student_name}님이 등록 요청을 보냈습니다!`,
+          severity: 'info'
+        });
+        
+        // 실시간으로 알림 추가 (백엔드 API 없이 WebSocket 데이터로 직접 추가)
+        const newNotification = {
+          notification_id: data.data.request_id,
+          type: 'NEW_TUTOR_REQUEST',
+          data: data.data,
+          created_at: data.data.created_at || Date.now(),
+          read: false,
+        };
+        
+        setNotifications(prev => [newNotification, ...prev]);
+      }
+      
+      // 기타 알림 타입 처리
+      if (data.type === 'FEEDBACK_RECEIVED' || data.type === 'SESSION_UPDATE') {
+        // 기존 알림 처리 로직
+      }
+    }
+  );
+
+  // WebSocket 연결 상태 모니터링
+  useEffect(() => {
+    if (isConnected) {
+      console.log('✅ 튜터 WebSocket 연결됨:', tutorEmail);
+    }
+    if (wsError) {
+      console.error('❌ 튜터 WebSocket 오류:', wsError);
+    }
+  }, [isConnected, wsError, tutorEmail]);
+
   // 세션 ID 생성 함수
   const generateSessionId = (studentEmail) => {
     const timestamp = Date.now();
@@ -280,10 +370,15 @@ export default function DashboardPage() {
     }
   };
 
-
+  // 읽지 않은 알림 개수
+  const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
-    <TutorLayout studentCount={students.length}>
+    <TutorLayout 
+      studentCount={students.length}
+      onNotificationClick={() => setNotificationDialog(true)}
+      unreadNotificationCount={unreadCount}
+    >
       <Box sx={{ maxWidth: 900, mx: 'auto', width: '100%' }}>
         {/* 요약 통계 */}
         <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -401,6 +496,14 @@ export default function DashboardPage() {
             </Button>
           </DialogActions>
         </Dialog>
+
+        {/* 튜터 등록 요청 알림 다이얼로그 */}
+        <NotificationDialog
+          open={notificationDialog}
+          onClose={() => setNotificationDialog(false)}
+          notifications={notifications}
+          onUpdate={loadNotifications}
+        />
 
         {/* 알림 */}
         <FeedbackNotification

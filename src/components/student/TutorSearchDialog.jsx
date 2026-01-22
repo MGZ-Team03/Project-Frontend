@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSelector } from 'react-redux';
 import {
   Dialog,
   DialogTitle,
@@ -23,9 +24,12 @@ import {
   Search as SearchIcon,
   PersonAdd as PersonAddIcon,
   Close as CloseIcon,
+  CheckCircle as ApprovedIcon,
+  Cancel as RejectedIcon,
 } from '@mui/icons-material';
 import { getTutors, requestTutor } from '../../api/tutorRegister';
 import TutorRequestDialog from './TutorRequestDialog';
+import { useWebSocket } from '../../hooks/useWebSocket';
 
 export default function TutorSearchDialog({ open, onClose }) {
   const [tutors, setTutors] = useState([]);
@@ -40,7 +44,112 @@ export default function TutorSearchDialog({ open, onClose }) {
   const [selectedTutor, setSelectedTutor] = useState(null);
   
   // 성공 알림
-  const [snackbar, setSnackbar] = useState({ open: false, message: '' });
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+
+  // Redux에서 학생 이메일 가져오기
+  const studentEmail = useSelector(state => state.auth.user?.email);
+
+  // WebSocket 연결 - 튜터의 승인/거부 알림 수신
+  const { isConnected, error: wsError } = useWebSocket(
+    studentEmail,
+    null,
+    (data) => {
+      console.log('📩 학생 알림 수신:', data);
+      
+      // 승인 알림
+      if (data.type === 'TUTOR_REQUEST_APPROVED') {
+        setSnackbar({
+          open: true,
+          message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
+          severity: 'success'
+        });
+        // 튜터 목록 새로고침
+        loadTutors();
+      }
+      
+      // 거부 알림
+      if (data.type === 'TUTOR_REQUEST_REJECTED') {
+        const reason = data.data.rejection_reason || '사유 없음';
+        setSnackbar({
+          open: true,
+          message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
+          severity: 'error'
+        });
+        // 튜터 목록 새로고침
+        loadTutors();
+      }
+    }
+  );
+
+  // Redux에서 학생 이메일 가져오기
+  const studentEmail = useSelector(state => state.auth.user?.email);
+
+  // WebSocket 연결 - 튜터의 승인/거부 알림 수신
+  const { isConnected, error: wsError } = useWebSocket(
+    studentEmail,
+    null,
+    (data) => {
+      console.log('📩 학생 알림 수신:', data);
+      
+      // 승인 알림
+      if (data.type === 'TUTOR_REQUEST_APPROVED') {
+        setSnackbar({
+          open: true,
+          message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
+          severity: 'success'
+        });
+        // 튜터 목록 새로고침
+        loadTutors();
+      }
+      
+      // 거부 알림
+      if (data.type === 'TUTOR_REQUEST_REJECTED') {
+        const reason = data.data.rejection_reason || '사유 없음';
+        setSnackbar({
+          open: true,
+          message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
+          severity: 'error'
+        });
+        // 튜터 목록 새로고침
+        loadTutors();
+      }
+    }
+  );
+
+  // Redux에서 학생 이메일 가져오기
+  const studentEmail = useSelector(state => state.auth.user?.email);
+
+  // WebSocket 연결 - 튜터의 승인/거부 알림 수신
+  const { isConnected, error: wsError } = useWebSocket(
+    studentEmail,
+    null,
+    (data) => {
+      console.log('📩 학생 알림 수신:', data);
+      
+      // 승인 알림
+      if (data.type === 'TUTOR_REQUEST_APPROVED') {
+        setSnackbar({
+          open: true,
+          message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
+          severity: 'success'
+        });
+        // 튜터 목록 새로고침
+        loadTutors();
+      }
+      
+      // 거부 알림
+      if (data.type === 'TUTOR_REQUEST_REJECTED') {
+        const reason = data.data.rejection_reason || '사유 없음';
+        setSnackbar({
+          open: true,
+          message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
+          severity: 'error'
+        });
+        // 튜터 목록 새로고침
+        loadTutors();
+      }
+    }
+  );
 
   const specialties = ['전체', '발음', '문법', '회화'];
 
@@ -114,25 +223,31 @@ export default function TutorSearchDialog({ open, onClose }) {
   };
 
   const getStatusChip = (tutor) => {
-    if (tutor.my_request_status === 'pending') {
+    if (tutor.myRequestStatus === 'pending') {
       return <Chip label="대기 중" color="warning" size="small" />;
     }
-    if (tutor.my_request_status === 'registered') {
+    if (tutor.myRequestStatus === 'registered') {
       return <Chip label="등록됨" color="success" size="small" />;
     }
-    if (!tutor.is_accepting) {
+    if (tutor.myRequestStatus === 'rejected') {
+      return <Chip label="거부됨" color="error" size="small" />;
+    }
+    if (!tutor.isAccepting) {
       return <Chip label="모집 마감" color="default" size="small" />;
     }
-    if (tutor.current_students >= tutor.max_students) {
+    if (tutor.currentStudents >= tutor.maxStudents) {
       return <Chip label="정원 마감" color="default" size="small" />;
     }
     return <Chip label="모집 중" color="success" size="small" />;
   };
 
   const canRequest = (tutor) => {
-    return !tutor.my_request_status &&
-           tutor.is_accepting &&
-           tutor.current_students < tutor.max_students;
+    if (tutor.myRequestStatus === 'rejected') {
+      return false;
+    }
+    return !tutor.myRequestStatus &&
+           tutor.isAccepting &&
+           tutor.currentStudents < tutor.maxStudents;
   };
 
   return (
@@ -256,7 +371,7 @@ export default function TutorSearchDialog({ open, onClose }) {
 
                             {/* 학생 수 */}
                             <Typography variant="caption" color="text.secondary">
-                              학생: {tutor.current_students || 0}/{tutor.max_students || 0}명
+                              학생: {tutor.currentStudents || 0}/{tutor.maxStudents || 0}명
                             </Typography>
                           </Stack>
                         </CardContent>
@@ -273,11 +388,12 @@ export default function TutorSearchDialog({ open, onClose }) {
                             </Button>
                           ) : (
                             <Button fullWidth disabled>
-                              {tutor.my_request_status === 'pending' && '대기 중'}
-                              {tutor.my_request_status === 'registered' && '등록됨'}
-                              {!tutor.my_request_status && !tutor.is_accepting && '모집 마감'}
-                              {!tutor.my_request_status && tutor.is_accepting &&
-                                tutor.current_students >= tutor.max_students && '정원 마감'}
+                              {tutor.myRequestStatus === 'pending' && '대기 중'}
+                              {tutor.myRequestStatus === 'registered' && '등록됨'}
+                              {tutor.myRequestStatus === 'rejected' && '거부됨 (재요청 불가)'}
+                              {!tutor.myRequestStatus && !tutor.isAccepting && '모집 마감'}
+                              {!tutor.myRequestStatus && tutor.isAccepting &&
+                                tutor.currentStudents >= tutor.maxStudents && '정원 마감'}
                             </Button>
                           )}
                         </CardActions>
@@ -303,12 +419,13 @@ export default function TutorSearchDialog({ open, onClose }) {
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        onClose={() => setSnackbar({ open: false, message: '', severity: 'success' })}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
         <Alert
-          onClose={() => setSnackbar({ ...snackbar, open: false })}
-          severity="success"
+          onClose={() => setSnackbar({ open: false, message: '', severity: 'success' })}
+          severity={snackbar.severity}
+          icon={snackbar.severity === 'success' ? <ApprovedIcon /> : <RejectedIcon />}
           sx={{ width: '100%' }}
         >
           {snackbar.message}
