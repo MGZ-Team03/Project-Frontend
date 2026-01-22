@@ -38,22 +38,9 @@ import TutorLayout from '../../components/common/TutorLayout';
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
 import NotificationDialog from '../../components/tutor/NotificationDialog';
-import { sendFeedback } from '../../api/tutorFeedback';
+import { sendFeedback, getMyStudents } from '../../api/tutorFeedback';
 import { getNotifications } from '../../api/notifications';
 import { getTutorRequests } from '../../api/tutorRegister';
-
-// 목업 학생 데이터
-const MOCK_STUDENTS = [
-  {
-    email: 'hwplus@gmail.com',
-    name: '홍길동',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 75,
-    duration: 15,
-    currentSentence: 'Hello, how are you today?',
-  },
-];
 
 function getStatusColor(status) {
   switch (status) {
@@ -207,7 +194,10 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const tutorEmail = useSelector(state => state.auth.user?.email) || 'hw_plus@naver.com';
   
-  const [students] = useState(MOCK_STUDENTS);
+  // 학생 목록 (승인된 학생만)
+  const [students, setStudents] = useState([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  
   const [feedbackDialog, setFeedbackDialog] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [feedbackText, setFeedbackText] = useState('');
@@ -219,30 +209,47 @@ export default function DashboardPage() {
   const [notificationDialog, setNotificationDialog] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
 
-  // 알림 목록 불러오기 (tutor_requests 테이블에서 직접 조회)
+  // 승인된 학생 목록 불러오기
+  const loadStudents = async () => {
+    try {
+      setLoadingStudents(true);
+      const response = await getMyStudents();
+      console.log('📚 학생 목록 응답:', response);
+      
+      // 백엔드 응답 구조에 맞게 파싱
+      const studentList = response.data?.students || response.students || [];
+      
+      // 학생 데이터를 대시보드 형식으로 변환
+      const formattedStudents = studentList.map(s => ({
+        email: s.studentEmail || s.student_email || s.email,
+        name: s.studentName || s.student_name || s.name || '이름 없음',
+        activity: null,  // WebSocket으로 실시간 업데이트
+        status: 'inactive',  // 기본값, WebSocket으로 업데이트
+        speakingRatio: 0,
+        duration: 0,
+        currentSentence: '',
+        assignedAt: s.assignedAt || s.assigned_at,
+      }));
+      
+      setStudents(formattedStudents);
+    } catch (error) {
+      console.error('학생 목록 로드 실패:', error);
+      setStudents([]);
+    } finally {
+      setLoadingStudents(false);
+    }
+  };
+
+  // 알림 목록 불러오기 (notifications API 사용)
   const loadNotifications = async () => {
     try {
       setLoadingNotifications(true);
-      const response = await getTutorRequests('pending');
       
-      // 백엔드 응답 구조: { data: { requests: [...], totalPending: n }, error: null, message: null }
-      const requestsList = response?.data?.requests || [];
+      // 안 읽은 알림만 조회 (백엔드에서 pending 상태 필터링됨)
+      const response = await getNotifications(false);
       
-      // requests 배열을 notifications 형식으로 변환
-      const formattedRequests = requestsList.map(req => ({
-        type: 'NEW_TUTOR_REQUEST',
-        data: {
-          request_id: req.requestId,
-          student_email: req.studentEmail,
-          student_name: req.studentName,
-          message: req.message,
-          created_at: req.createdAt
-        },
-        read: false,
-        created_at: req.createdAt
-      }));
-      
-      setNotifications(formattedRequests);
+      // 백엔드 응답: { data: { notifications: [...], unreadCount: n } }
+      setNotifications(response.data?.notifications || []);
     } catch (error) {
       console.error('알림 로드 실패:', error);
       // 에러 발생 시에도 빈 배열 설정
@@ -252,9 +259,10 @@ export default function DashboardPage() {
     }
   };
 
-  // 컴포넌트 마운트 시 알림 로드
+  // 컴포넌트 마운트 시 알림 및 학생 목록 로드
   useEffect(() => {
     loadNotifications();
+    loadStudents();
   }, [tutorEmail]);
 
   // WebSocket 연결 - 튜터 등록 요청 알림 수신
@@ -262,8 +270,6 @@ export default function DashboardPage() {
     tutorEmail,
     null, // 튜터는 tutor_email 파라미터 불필요
     (data) => {
-      console.log('📩 튜터 알림 수신:', data);
-      
       // 새로운 튜터 등록 요청 알림
       if (data.type === 'NEW_TUTOR_REQUEST') {
         setNotification({
@@ -289,16 +295,6 @@ export default function DashboardPage() {
       }
     }
   );
-
-  // WebSocket 연결 상태 모니터링
-  useEffect(() => {
-    if (isConnected) {
-      console.log('✅ 튜터 WebSocket 연결됨:', tutorEmail);
-    }
-    if (wsError) {
-      console.error('❌ 튜터 WebSocket 오류:', wsError);
-    }
-  }, [isConnected, wsError, tutorEmail]);
 
   // 세션 ID 생성 함수
   const generateSessionId = (studentEmail) => {
@@ -349,8 +345,6 @@ export default function DashboardPage() {
         message_type: 'text',
         session_id: sessionId
       });
-
-      console.log('피드백 전송 결과:', result);
 
       setNotification({
         message: `피드백 전송 성공! ${result.websocket_sent ? '(실시간 전달됨)' : '(오프라인)'}`,
@@ -442,18 +436,37 @@ export default function DashboardPage() {
         </Typography>
 
         <Stack spacing={2}>
-          {students.map((student) => (
-            <StudentCard
-              key={student.email}
-              student={student}
-              onClick={handleStudentClick}
-              onFeedbackClick={openFeedbackDialog}
-              tutorEmail={tutorEmail}
-              disabled={sending}
-              onQuickFeedbackSuccess={handleQuickFeedbackSuccess}
-              onQuickFeedbackError={handleQuickFeedbackError}
-            />
-          ))}
+          {loadingStudents ? (
+            <Card elevation={2}>
+              <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                <Typography color="text.secondary">학생 목록을 불러오는 중...</Typography>
+              </CardContent>
+            </Card>
+          ) : students.length === 0 ? (
+            <Card elevation={2}>
+              <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                <Typography color="text.secondary">
+                  아직 승인된 학생이 없습니다.
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  학생의 등록 요청을 승인하면 여기에 표시됩니다.
+                </Typography>
+              </CardContent>
+            </Card>
+          ) : (
+            students.map((student) => (
+              <StudentCard
+                key={student.email}
+                student={student}
+                onClick={handleStudentClick}
+                onFeedbackClick={openFeedbackDialog}
+                tutorEmail={tutorEmail}
+                disabled={sending}
+                onQuickFeedbackSuccess={handleQuickFeedbackSuccess}
+                onQuickFeedbackError={handleQuickFeedbackError}
+              />
+            ))
+          )}
         </Stack>
 
         {/* 피드백 다이얼로그 */}
@@ -500,7 +513,11 @@ export default function DashboardPage() {
         {/* 튜터 등록 요청 알림 다이얼로그 */}
         <NotificationDialog
           open={notificationDialog}
-          onClose={() => setNotificationDialog(false)}
+          onClose={() => {
+            setNotificationDialog(false);
+            // 모달 닫을 때 학생 목록 갱신 (승인된 학생 반영)
+            loadStudents();
+          }}
           notifications={notifications}
           onUpdate={loadNotifications}
         />

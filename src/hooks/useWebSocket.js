@@ -24,12 +24,10 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
       if (tutorEmail) {
         wsUrl += `&tutor_email=${encodeURIComponent(tutorEmail)}`;
       }
-      console.log('🔌 WebSocket 연결 시도:', wsUrl);
       
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
-        console.log('✅ WebSocket 연결 성공');
         setIsConnected(true);
         setError(null);
       };
@@ -37,7 +35,6 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log('📩 WebSocket 메시지 수신:', data);
           
           if (onMessage) {
             onMessage(data);
@@ -53,7 +50,6 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
       };
 
       ws.onclose = (event) => {
-        console.log('❌ WebSocket 연결 종료:', event.code, event.reason);
         setIsConnected(false);
 
         // 5초 후 자동 재연결
@@ -61,7 +57,6 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
           clearTimeout(reconnectTimeoutRef.current);
         }
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('🔄 WebSocket 재연결 시도...');
           connect();
         }, 5000);
       };
@@ -84,7 +79,6 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
   const sendMessage = (message) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
-      console.log('📤 WebSocket 메시지 전송:', message);
     } else {
       console.error('❌ WebSocket이 연결되지 않음');
     }

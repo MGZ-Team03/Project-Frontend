@@ -22,7 +22,7 @@ import {
   Cancel as RejectIcon,
   Notifications as NotificationsIcon,
 } from '@mui/icons-material';
-import { getNotifications } from '../../api/notifications';
+import { getNotifications, markNotificationAsRead } from '../../api/notifications';
 import { processTutorRequest } from '../../api/tutorRegister';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
@@ -57,6 +57,16 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
       setProcessing(requestId);
       await processTutorRequest(requestId, 'approve');
       
+      // 알림 읽음 처리 (notification_id_timestamp 사용)
+      const notification = notifications.find(n => n.data?.request_id === requestId);
+      if (notification?.notification_id_timestamp) {
+        try {
+          await markNotificationAsRead(notification.notification_id_timestamp);
+        } catch (readErr) {
+          console.error('알림 읽음 처리 실패:', readErr);
+        }
+      }
+      
       // 알림 목록 갱신
       if (onUpdate) {
         await onUpdate();
@@ -88,6 +98,16 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
       setConfirmDialog({ open: false, requestId: null, studentName: '', studentEmail: '' });
       
       await processTutorRequest(requestId, 'reject', '현재 학생을 받을 수 없습니다.');
+      
+      // 알림 읽음 처리 (notification_id_timestamp 사용)
+      const notification = notifications.find(n => n.data?.request_id === requestId);
+      if (notification?.notification_id_timestamp) {
+        try {
+          await markNotificationAsRead(notification.notification_id_timestamp);
+        } catch (readErr) {
+          console.error('알림 읽음 처리 실패:', readErr);
+        }
+      }
       
       // 알림 목록 갱신
       if (onUpdate) {
@@ -170,9 +190,9 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
               </Box>
             )}
 
-            {!loading && notifications.map((notification) => (
+            {!loading && notifications.map((notification, index) => (
               <Card
-                key={notification.notification_id}
+                key={notification.notification_id || notification.data?.request_id || `notification-${index}`}
                 variant="outlined"
                 sx={{
                   bgcolor: notification.read ? 'background.paper' : 'action.hover',

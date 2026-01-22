@@ -70,16 +70,17 @@ export default function Header({
           />
         )}
 
-        {/* 학생 전용: 튜터 찾기 버튼 */}
+        {/* 학생 전용: 튜터 찾기 버튼 (알림 배지 포함) */}
         {isStudent && onTutorSearchClick && (
-          <Button
-            variant="contained"
-            startIcon={<PersonAdd />}
-            onClick={onTutorSearchClick}
-            sx={{ mr: 2 }}
-          >
-            튜터 찾기
-          </Button>
+          <Badge badgeContent={unreadNotificationCount} color="error" sx={{ mr: 2 }}>
+            <Button
+              variant="contained"
+              startIcon={<PersonAdd />}
+              onClick={onTutorSearchClick}
+            >
+              튜터 찾기
+            </Button>
+          </Badge>
         )}
 
         {/* 튜터 전용: 알림 아이콘 */}

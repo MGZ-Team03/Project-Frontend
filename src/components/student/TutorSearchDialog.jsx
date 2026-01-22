@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import {
   Dialog,
@@ -26,12 +26,14 @@ import {
   Close as CloseIcon,
   CheckCircle as ApprovedIcon,
   Cancel as RejectedIcon,
+  Notifications as NotificationsIcon,
 } from '@mui/icons-material';
 import { getTutors, requestTutor } from '../../api/tutorRegister';
+import { getNotifications, markNotificationAsRead } from '../../api/notifications';
 import TutorRequestDialog from './TutorRequestDialog';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import ws from '../../config/webSocketConfig';
 
-export default function TutorSearchDialog({ open, onClose }) {
+export default function TutorSearchDialog({ open, onClose, onUpdate }) {
   const [tutors, setTutors] = useState([]);
   const [filteredTutors, setFilteredTutors] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -46,117 +48,114 @@ export default function TutorSearchDialog({ open, onClose }) {
   // 성공 알림
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
-  // Redux에서 학생 이메일 가져오기
-  const studentEmail = useSelector(state => state.auth.user?.email);
-
-  // WebSocket 연결 - 튜터의 승인/거부 알림 수신
-  const { isConnected, error: wsError } = useWebSocket(
-    studentEmail,
-    null,
-    (data) => {
-      console.log('📩 학생 알림 수신:', data);
-      
-      // 승인 알림
-      if (data.type === 'TUTOR_REQUEST_APPROVED') {
-        setSnackbar({
-          open: true,
-          message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
-          severity: 'success'
-        });
-        // 튜터 목록 새로고침
-        loadTutors();
-      }
-      
-      // 거부 알림
-      if (data.type === 'TUTOR_REQUEST_REJECTED') {
-        const reason = data.data.rejection_reason || '사유 없음';
-        setSnackbar({
-          open: true,
-          message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
-          severity: 'error'
-        });
-        // 튜터 목록 새로고침
-        loadTutors();
-      }
-    }
-  );
+  // 알림 관련 state
+  const [notifications, setNotifications] = useState([]);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
 
   // Redux에서 학생 이메일 가져오기
   const studentEmail = useSelector(state => state.auth.user?.email);
-
-  // WebSocket 연결 - 튜터의 승인/거부 알림 수신
-  const { isConnected, error: wsError } = useWebSocket(
-    studentEmail,
-    null,
-    (data) => {
-      console.log('📩 학생 알림 수신:', data);
-      
-      // 승인 알림
-      if (data.type === 'TUTOR_REQUEST_APPROVED') {
-        setSnackbar({
-          open: true,
-          message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
-          severity: 'success'
-        });
-        // 튜터 목록 새로고침
-        loadTutors();
-      }
-      
-      // 거부 알림
-      if (data.type === 'TUTOR_REQUEST_REJECTED') {
-        const reason = data.data.rejection_reason || '사유 없음';
-        setSnackbar({
-          open: true,
-          message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
-          severity: 'error'
-        });
-        // 튜터 목록 새로고침
-        loadTutors();
-      }
-    }
-  );
-
-  // Redux에서 학생 이메일 가져오기
-  const studentEmail = useSelector(state => state.auth.user?.email);
-
-  // WebSocket 연결 - 튜터의 승인/거부 알림 수신
-  const { isConnected, error: wsError } = useWebSocket(
-    studentEmail,
-    null,
-    (data) => {
-      console.log('📩 학생 알림 수신:', data);
-      
-      // 승인 알림
-      if (data.type === 'TUTOR_REQUEST_APPROVED') {
-        setSnackbar({
-          open: true,
-          message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
-          severity: 'success'
-        });
-        // 튜터 목록 새로고침
-        loadTutors();
-      }
-      
-      // 거부 알림
-      if (data.type === 'TUTOR_REQUEST_REJECTED') {
-        const reason = data.data.rejection_reason || '사유 없음';
-        setSnackbar({
-          open: true,
-          message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
-          severity: 'error'
-        });
-        // 튜터 목록 새로고침
-        loadTutors();
-      }
-    }
-  );
 
   const specialties = ['전체', '발음', '문법', '회화'];
+
+  // 튜터 목록 불러오기
+  const loadTutors = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await getTutors();
+      setTutors(response.data?.tutors || []);
+    } catch (err) {
+      console.error('튜터 목록 조회 실패:', err);
+      setError('튜터 목록을 불러오는 데 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 알림 목록 조회 (안 읽은 것만)
+  const loadNotifications = useCallback(async () => {
+    try {
+      setLoadingNotifications(true);
+      const response = await getNotifications(false);
+      
+      // API 응답 구조에 맞게 notifications 추출
+      const allNotifications = response.notifications || response.data?.notifications || [];
+      
+      // TUTOR_REQUEST_APPROVED, TUTOR_REQUEST_REJECTED 타입만 필터링
+      const tutorNotifications = allNotifications.filter(
+        n => n.type === 'TUTOR_REQUEST_APPROVED' || n.type === 'TUTOR_REQUEST_REJECTED'
+      );
+      
+      setNotifications(tutorNotifications);
+    } catch (err) {
+      console.error('알림 조회 실패:', err);
+    } finally {
+      setLoadingNotifications(false);
+    }
+  }, []);
+
+  // WebSocket 메시지 핸들러 - 싱글톤 WebSocket 사용
+  const handleWebSocketMessage = useCallback((data) => {
+    // 승인 알림
+    if (data.type === 'TUTOR_REQUEST_APPROVED') {
+      setSnackbar({
+        open: true,
+        message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
+        severity: 'success'
+      });
+      // 튜터 목록 새로고침
+      loadTutors();
+      // 알림 목록도 갱신
+      loadNotifications();
+    }
+    
+    // 거부 알림
+    if (data.type === 'TUTOR_REQUEST_REJECTED') {
+      const reason = data.data.rejection_reason || '사유 없음';
+      setSnackbar({
+        open: true,
+        message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
+        severity: 'error'
+      });
+      // 튜터 목록 새로고침
+      loadTutors();
+      // 알림 목록도 갱신
+      loadNotifications();
+    }
+  }, [loadTutors, loadNotifications]);
+
+  // 다이얼로그가 열릴 때 WebSocket 리스너 등록
+  useEffect(() => {
+    if (open) {
+      const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
+      return () => unsubscribe();
+    }
+  }, [open, handleWebSocketMessage]);
+
+  // 알림 확인 (읽음 처리)
+  const handleMarkAsRead = async (notificationIdTimestamp) => {
+    try {
+      await markNotificationAsRead(notificationIdTimestamp);
+      
+      // 목록에서 제거
+      setNotifications(prev => 
+        prev.filter(n => n.notificationIdTimestamp !== notificationIdTimestamp)
+      );
+      
+      // 부모 컴포넌트에 알림 카운트 갱신 요청
+      if (onUpdate) {
+        onUpdate();
+      }
+    } catch (err) {
+      console.error('알림 읽음 처리 실패:', err);
+    }
+  };
 
   // 튜터 목록 불러오기
   useEffect(() => {
     if (open) {
       loadTutors();
+      loadNotifications();  // 알림도 함께 로드
     }
   }, [open]);
 
@@ -183,20 +182,6 @@ export default function TutorSearchDialog({ open, onClose }) {
 
     setFilteredTutors(result);
   }, [tutors, searchQuery, selectedSpecialty]);
-
-  const loadTutors = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await getTutors();
-      setTutors(response.data?.tutors || []);
-    } catch (err) {
-      console.error('튜터 목록 조회 실패:', err);
-      setError('튜터 목록을 불러오는 데 실패했습니다.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleRequestClick = (tutor) => {
     setSelectedTutor(tutor);
@@ -276,6 +261,77 @@ export default function TutorSearchDialog({ open, onClose }) {
 
         <DialogContent>
           <Stack spacing={3}>
+            {/* 알림 영역 - 상단 */}
+            {notifications.length > 0 && (
+              <Box 
+                sx={{ 
+                  bgcolor: 'grey.50', 
+                  p: 2, 
+                  borderRadius: 2, 
+                  border: '1px solid',
+                  borderColor: 'grey.200',
+                }}
+              >
+                <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
+                  <NotificationsIcon color="primary" fontSize="small" />
+                  <Typography variant="subtitle2" fontWeight="bold">
+                    새 알림 {notifications.length}개
+                  </Typography>
+                </Stack>
+                
+                <Stack spacing={1}>
+                  {notifications.slice(0, 3).map(notification => {
+                    const isApproved = notification.type === 'TUTOR_REQUEST_APPROVED';
+                    
+                    return (
+                      <Card 
+                        key={notification.notificationIdTimestamp || notification.notification_id} 
+                        variant="outlined"
+                        sx={{ 
+                          borderLeft: '4px solid',
+                          borderLeftColor: isApproved ? 'success.main' : 'error.main',
+                          bgcolor: isApproved ? 'success.lighter' : 'error.lighter',
+                        }}
+                      >
+                        <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            {isApproved ? (
+                              <ApprovedIcon color="success" fontSize="small" />
+                            ) : (
+                              <RejectedIcon color="error" fontSize="small" />
+                            )}
+                            <Box flex={1}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {notification.data?.tutor_name}님이 요청을 {isApproved ? '승인' : '거부'}했습니다
+                              </Typography>
+                              {!isApproved && notification.data?.rejection_reason && (
+                                <Typography variant="caption" color="text.secondary">
+                                  사유: {notification.data.rejection_reason}
+                                </Typography>
+                              )}
+                            </Box>
+                            <Button 
+                              size="small" 
+                              variant="outlined"
+                              onClick={() => handleMarkAsRead(notification.notificationIdTimestamp)}
+                            >
+                              확인
+                            </Button>
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                  
+                  {notifications.length > 3 && (
+                    <Typography variant="caption" color="text.secondary" textAlign="center">
+                      +{notifications.length - 3}개의 알림이 더 있습니다
+                    </Typography>
+                  )}
+                </Stack>
+              </Box>
+            )}
+
             {/* 검색 바 */}
             <TextField
               fullWidth

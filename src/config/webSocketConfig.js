@@ -1,16 +1,50 @@
 import {WS_URL} from "../utils/constants.js";
+import store from "../store/index.js";
 
 class WebSocketSingleton {
     constructor() {
         this.socket = null; // 초기에는 연결 없음
         this.intervalId = null;
+        this.messageListeners = new Set();  // 메시지 리스너 집합
+        this.connectedUserEmail = null;  // 연결된 사용자 이메일 추적
+    }
+
+    // 메시지 리스너 등록
+    addMessageListener(listener) {
+        this.messageListeners.add(listener);
+        return () => this.messageListeners.delete(listener);  // unsubscribe 함수 반환
+    }
+
+    // 메시지 리스너 제거
+    removeMessageListener(listener) {
+        this.messageListeners.delete(listener);
     }
 
     connect() {
-        if (!this.socket || this.socket.readyState === WebSocket.CLOSED) {
-            this.socket = new WebSocket(WS_URL);
-            this._setupListeners();
+        // Redux에서 사용자 이메일 가져오기
+        const state = store.getState();
+        const userEmail = state.auth?.user?.email;
+        
+        // 이미 같은 사용자로 연결되어 있으면 재사용
+        if (this.socket && this.socket.readyState === WebSocket.OPEN && this.connectedUserEmail === userEmail) {
+            return this.socket;
         }
+        
+        // 다른 사용자이거나 연결이 없으면 새로 연결
+        if (this.socket && this.socket.readyState !== WebSocket.CLOSED) {
+            this.socket.close();
+        }
+        
+        // user_email 쿼리 파라미터 추가
+        let wsUrl = WS_URL;
+        if (userEmail) {
+            wsUrl = `${WS_URL}?user_email=${encodeURIComponent(userEmail)}`;
+        }
+        
+        this.socket = new WebSocket(wsUrl);
+        this.connectedUserEmail = userEmail;
+        this._setupListeners();
+        
         return this.socket;
     }
 
@@ -26,7 +60,6 @@ class WebSocketSingleton {
                     return;
                 }
                 this.socket.send(JSON.stringify(data));
-                console.log("📤 데이터 전송:", data);
             }
         }, interval);
 
@@ -48,10 +81,30 @@ class WebSocketSingleton {
         }
     }
     _setupListeners() {
-        this.socket.onopen = () => console.log("✅ WebSocket 연결됨");
-        this.socket.onmessage = (event) => console.log("📩 메시지 수신:", event.data);
+        this.socket.onopen = () => console.log("✅ WebSocket 연결됨 (user_email:", this.connectedUserEmail, ")");
+        
+        // 모든 등록된 리스너에게 메시지 전달
+        this.socket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                
+                // 모든 리스너에게 메시지 전달
+                this.messageListeners.forEach(listener => {
+                    try {
+                        listener(data);
+                    } catch (err) {
+                        console.error("❌ 리스너 오류:", err);
+                    }
+                });
+            } catch (err) {
+                console.error("❌ 메시지 파싱 오류:", err);
+            }
+        };
+        
         this.socket.onerror = (error) => console.error("❌ WebSocket 에러:", error);
-        this.socket.onclose = () => console.log("⚡ WebSocket 연결 종료");
+        this.socket.onclose = () => {
+            this.connectedUserEmail = null;
+        };
     }
 
     getSocket() {
