@@ -2,7 +2,8 @@ import axios from 'axios';
 import { API_BASE_URL } from '../utils/constants';
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  // DEV에서는 API_BASE_URL이 ''일 수 있음 (Vite proxy 사용)
+  baseURL: API_BASE_URL || undefined,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
@@ -27,9 +28,27 @@ api.interceptors.response.use(
   (error) => {
     // 401 에러 시 자동 로그아웃 및 로그인 페이지 이동
     if (error.response?.status === 401) {
-      localStorage.removeItem('idToken');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+      // 사용자에게 알림 후 리다이렉트
+      const currentPath = window.location.pathname;
+      const isLoginPage = currentPath === '/login';
+
+      if (!isLoginPage) {
+        // 로그인 페이지가 아닌 경우에만 알림
+        console.warn('[Auth] Session expired, redirecting to login');
+
+        // 작업 중인 데이터 임시 저장 시도
+        const hasUnsavedWork =
+          currentPath.includes('/practice') ||
+          currentPath.includes('/chat');
+
+        if (hasUnsavedWork) {
+          alert('세션이 만료되었습니다. 로그인 페이지로 이동합니다.');
+        }
+
+        localStorage.removeItem('idToken');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

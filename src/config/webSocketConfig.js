@@ -7,6 +7,13 @@ class WebSocketSingleton {
     }
 
     connect() {
+        // 오프라인이면 연결 시도하지 않음 (콘솔 스팸 방지)
+        try {
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                console.warn("⚠️ 오프라인 상태: WebSocket 연결을 건너뜁니다");
+                return null;
+            }
+        } catch (_) {}
         if (!this.socket || this.socket.readyState === WebSocket.CLOSED) {
             this.socket = new WebSocket(WS_URL);
             this._setupListeners();
@@ -26,7 +33,7 @@ class WebSocketSingleton {
                     return;
                 }
                 this.socket.send(JSON.stringify(data));
-                console.log("📤 데이터 전송:", data);
+                 console.log("📤 데이터 전송:", data);
             }
         }, interval);
 
