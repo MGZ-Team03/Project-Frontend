@@ -299,13 +299,17 @@ export function useWhisperSTT() {
       const { audio, sampleRate } = await decodeBlobToFloat32(blob, { trimThreshold, trimPaddingSec });
 
       // 전처리 로그 추가
-      console.log(`[STT] 전처리 완료: samples=${audio.length}, duration=${(audio.length/16000).toFixed(2)}s`);
+      const vadDuration = (audio.length/16000).toFixed(2);
+      console.log(`[STT] 전처리 완료: samples=${audio.length}, VAD 시간=${vadDuration}s`);
       if (audio.length < 8000) {  // 0.5초 미만
-        console.warn(`[STT] ⚠️ 경고: 오디오가 매우 짧음 (${(audio.length/16000).toFixed(2)}s) - 빈 결과 가능성 높음`);
+        console.warn(`[STT] ⚠️ 경고: 오디오가 매우 짧음 (VAD 시간: ${vadDuration}s) - 빈 결과 가능성 높음`);
       }
 
       const worker = getWorker();
       const id = msgIdSeq++;
+
+      // Transfer 전에 VAD duration 계산 (transfer 후에는 audio.length가 0이 됨)
+      const vadDurationMs = Math.round((audio.length / 16000) * 1000);
 
       const text = await new Promise((resolve, reject) => {
         pendingRef.current.set(id, { resolve, reject });
@@ -317,7 +321,10 @@ export function useWhisperSTT() {
       });
 
       setStatus('ready');
-      return text;
+      return {
+        text,
+        vadDurationMs
+      };
     };
 
     const desiredBackend = backend === 'webgpu' ? 'webgpu' : 'wasm';

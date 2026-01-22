@@ -176,8 +176,8 @@ function drawOverlay(canvas, video, landmarks, { showGrid, showMouthLandmarks })
   // 캔버스 클리어
   ctx.clearRect(0, 0, width, height);
 
-  if (showGrid) {
-    drawGrid(ctx, width, height);
+  if (showGrid && landmarks) {
+    drawFaceMesh(ctx, width, height, landmarks);
   }
 
   if (!showMouthLandmarks || !landmarks) return;
@@ -224,31 +224,54 @@ function drawOverlay(canvas, video, landmarks, { showGrid, showMouthLandmarks })
 }
 
 /**
- * 그리드 오버레이
+ * 얼굴 메시 그리드 오버레이
+ * MediaPipe Face Mesh의 468개 랜드마크를 점으로 표시
  */
-function drawGrid(ctx, width, height) {
-  const cols = 3;
-  const rows = 3;
-
+function drawFaceMesh(ctx, width, height, landmarks) {
   ctx.save();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+
+  // 모든 랜드마크를 작은 점으로 표시
+  ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+  for (let i = 0; i < landmarks.length; i++) {
+    const point = landmarks[i];
+    if (!point) continue;
+
+    const x = point.x * width;
+    const y = point.y * height;
+
+    ctx.beginPath();
+    ctx.arc(x, y, 1, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  // 얼굴 윤곽선 강조 (선택적)
+  // Face Mesh 주요 윤곽선 인덱스
+  const faceOval = [
+    10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
+    397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
+    172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
+  ];
+
+  ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
   ctx.lineWidth = 1;
+  ctx.beginPath();
 
-  for (let i = 1; i < cols; i++) {
-    const x = (width / cols) * i;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
-    ctx.stroke();
-  }
+  for (let i = 0; i < faceOval.length; i++) {
+    const idx = faceOval[i];
+    const point = landmarks[idx];
+    if (!point) continue;
 
-  for (let j = 1; j < rows; j++) {
-    const y = (height / rows) * j;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
+    const x = point.x * width;
+    const y = point.y * height;
+
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
   }
+  ctx.closePath();
+  ctx.stroke();
 
   ctx.restore();
 }

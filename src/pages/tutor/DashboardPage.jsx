@@ -202,7 +202,7 @@ function StudentCard({ student, onClick, onFeedbackClick, tutorEmail, disabled, 
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const tutorEmail = useSelector(state => state.auth.user?.email) || 'hw_plus@naver.com';
+  const tutorEmail = useSelector(state => state.auth.user?.email);
   
   const [students,setStudents] = useState([]);
   const [feedbackDialog, setFeedbackDialog] = useState(false);

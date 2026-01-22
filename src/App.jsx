@@ -1,9 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Provider } from 'react-redux';
-import { useEffect } from 'react';
-import { useDispatch } from 'react-redux';
+import { useEffect, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { store } from './store';
 import { checkAuth } from './store/slices/authSlice';
+import { loadStatsFromStorage } from './store/slices/speakingStatsSlice';
 
 // Pages - Student
 import LoginPage from './pages/LoginPage';
@@ -22,10 +23,22 @@ import ProtectedRoute from './components/common/ProtectedRoute';
 
 function AppContent() {
   const dispatch = useDispatch();
+  const user = useSelector((state) => state.auth.user);
+  const [authChecked, setAuthChecked] = useState(false);
 
+  // Step 1: Check auth on mount
   useEffect(() => {
-    dispatch(checkAuth());
+    dispatch(checkAuth()).finally(() => {
+      setAuthChecked(true);
+    });
   }, [dispatch]);
+
+  // Step 2: Load user-specific stats after auth confirmed
+  useEffect(() => {
+    if (authChecked && user?.email) {
+      dispatch(loadStatsFromStorage({ userEmail: user.email }));
+    }
+  }, [authChecked, user?.email, dispatch]);
 
   return (
     <Routes>
