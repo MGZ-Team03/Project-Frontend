@@ -244,9 +244,24 @@ GSI: student_email-index
 PK: student_email
 SK: timestamp
 - session_type: 'sentence' | 'ai_chat'
-- duration: Number (초)
-- speaking_duration: Number (초)
-- speaking_ratio: Number (%)
+- recording_duration: Number (ms, 녹음 버튼 누른 총 시간)
+- speaking_duration: Number (ms, 실제 발화 시간)
+- net_speaking_density: Number (%, speaking / recording * 100)
+
+# 문장 연습 전용 필드
+- practice_records: List [{
+    sentence_id: String,
+    pace_ratio: Number,
+    user_time: Number (ms),
+    ref_time: Number (ms),
+    timestamp: Number
+  }]
+- avg_pace_ratio: Number (세션 평균)
+
+# AI 대화 전용 필드
+- response_latencies: List [Number] (ms)
+- avg_response_latency: Number (세션 평균)
+- chat_turns_count: Number
 
 GSI: tutor_email-timestamp-index
 TTL: 90일
@@ -256,11 +271,24 @@ TTL: 90일
 ```
 PK: student_email
 SK: date (YYYY-MM-DD)
-- total_duration: Number
-- speaking_duration: Number
-- speaking_ratio: Number
-- sentence_sessions: Number
-- ai_chat_sessions: Number
+
+# 기본 통계
+- total_recording_time: Number (ms, 일별 총 녹음 시간)
+- total_speaking_time: Number (ms, 일별 총 발화 시간)
+- sessions_count: Number (일별 세션 수)
+- practice_count: Number (문장 연습 횟수)
+- chat_turns_count: Number (AI 대화 턴 수)
+
+# 4대 지표 (일별 평균)
+- avg_pace_ratio: Number (원어민 대비 속도, 1.0 = 완벽)
+- avg_response_latency: Number (ms, 반응 속도)
+- avg_net_speaking_density: Number (%, 녹음 시간 대비 발화 밀도)
+- avg_response_quality: Number (0-100점, 응답 품질 종합 점수)
+
+# 상세 기록 (분석용)
+- pace_ratios: List [Number] (모든 연습 기록)
+- response_latencies: List [Number] (모든 대화 반응 속도 기록)
+- response_qualities: List [Object] (응답 품질 상세 데이터)
 ```
 
 ### 5. ai_conversations
@@ -457,25 +485,7 @@ async function notifyTutor(studentEmail, status) {
 
 튜터 피드백: "박영어 학생은 평균 1.4배 느리게 말하고 있어요. 조금 더 자신 있게 이어서 말해보세요."
 
-2. 발화 반응 속도 (Response Latency) - 숙련도 지표
-
-AI 대화 모드에서 중요한 지표입니다. AI가 질문을 끝낸 후 내가 대답을 시작하기까지 걸리는 시간입니다.
-
-측정 방법: (내 발음 감지 시작 시각) - (AI 음성 재생 종료 시각)
-
-왜 필요한가?:
-
-영어를 머릿속으로 번역하고 문장을 구성하느라 걸리는 **'망설임 시간'**을 의미합니다.
-
-이 시간이 짧아질수록 영어를 영어로 받아들이는 '영어 뇌'가 만들어지고 있다는 증거가 됩니다.
-
-통계 활용 예시:
-
-그래프: 주차별 '평균 반응 속도' 변화 (3초 → 1.5초로 단축 시 성공).
-
-레벨 판단: 반응 속도가 1초 이내면 난이도를 상향 조정.
-
-3. 순수 발화 밀도 (Net Speaking Density) - 집중도 지표
+2. 순수 발화 밀도 (Net Speaking Density) - 집중도 지표
 
 기존 '전체 시간 대비 발음 시간'을 보완한 지표입니다. 전체 시간에서 '불가피한 시간(AI가 말하는 시간, 로딩 시간)'을 뺀 시간 대비 비율입니다.
 
@@ -492,6 +502,52 @@ AI가 길게 설명하는 동안 학생 비율이 떨어지는 왜곡을 방지�
 대화 적극성: AI 대화에서 단답형(Yes/No)으로만 대답하면 이 비율이 낮게 나옵니다. 길게 설명할수록 비율이 높아집니다.
 
 튜터 대시보드: "최토익 학생은 듣기는 잘하지만, 답변이 너무 짧아요(밀도 20%). 더 긴 문장 유도가 필요해요."
+
+3. 응답 품질 (Response Quality) - 발화 완성도 지표
+
+AI 대화 모드에서 응답의 품질을 다차원적으로 평가하는 종합 지표입니다. 단순히 시간만 측정하는 것이 아니라, 얼마나 자연스럽고 완성도 있는 응답인지를 평가합니다.
+
+측정 요소 (3가지 차원):
+
+1. **발화 시간 (Duration)**: 응답 길이 (1초~10초가 적정, 30점 만점)
+2. **말 속도 (Speech Rate)**: 분당 단어 수 (80~180 wpm이 자연스러움, 35점 만점)
+   - 80 미만: 너무 느림 (말더듬, "um... uh..." 많음)
+   - 180 초과: 너무 빠름 (긴장, 불안정)
+3. **유창성 (Fluency)**: VAD 구간 분석 기반 침묵 비율 (침묵이 적을수록 높음, 35점 만점)
+   - 발화 구간 사이의 긴 침묵을 감지하여 점수 감점
+   - "I... um... well... like..." 패턴 자동 감지
+
+종합 점수: 0-100점 척도
+
+왜 필요한가?:
+
+**Response Latency(반응 속도)와의 차이**:
+- Response Latency: AI 질문 후 얼마나 빨리 대답을 **시작**했는가 (반응 시간)
+- Response Quality: 대답의 **내용**이 얼마나 완성도 있고 자연스러운가 (응답 품질)
+
+단순히 말을 빨리 시작해도, 말더듬거나 긴 침묵이 있으면 낮은 점수를 받습니다.
+
+반대로 조금 늦게 시작해도, 유창하고 자연스럽게 말하면 높은 점수를 받습니다.
+
+통계 활용 예시:
+
+**품질 개선 추적**:
+- Week 1: 평균 48점 (말더듬, 침묵 많음)
+- Week 4: 평균 72점 (유창성 향상)
+
+**상세 피드백**:
+- "80점 이상: 훌륭한 응답!"
+- "60-80점: 좋은 응답"
+- "40-60점: 보통"
+- "40점 미만: 개선 필요 (말 속도와 유창성을 높이세요)"
+
+**학습 패턴 분석**:
+```
+마지막 응답: 65점
+- 단어 수: 28개
+- 말 속도: 140 wpm (적정)
+- 유창성: 78% (양호)
+```
 
 
 ## 예상 일정 (2주)

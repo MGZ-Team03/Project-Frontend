@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import ws from "../../config/webSocketConfig.js";
 
 export default function useWebSocket(getData, options={}) {
-
     const {
         interval = 5000,
         sendImmediately = true,  // 즉시 전송 여부

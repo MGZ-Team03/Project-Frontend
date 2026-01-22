@@ -15,7 +15,6 @@ import axios from './axios';
 export const sendFeedback = async (feedbackData) => {
   try {
     const response = await axios.post('/api/tutor/feedback', feedbackData);
-    console.log('✅ 피드백 전송 성공:', response.data);
     return response.data;
   } catch (error) {
     console.error('❌ 피드백 전송 실패:', error);
@@ -38,7 +37,6 @@ export const getFeedbackHistory = async (studentEmail, limit = 50) => {
         limit 
       }
     });
-    console.log('✅ 피드백 히스토리 조회 성공:', response.data);
     return response.data;
   } catch (error) {
     console.error('❌ 피드백 히스토리 조회 실패:', error);
@@ -54,7 +52,6 @@ export const getFeedbackHistory = async (studentEmail, limit = 50) => {
 export const getMyStudents = async () => {
   try {
     const response = await axios.get('/api/tutor/students');
-    console.log('✅ 학생 목록 조회 성공:', response.data);
     return response.data;
   } catch (error) {
     console.error('❌ 학생 목록 조회 실패:', error);

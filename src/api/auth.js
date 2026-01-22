@@ -112,7 +112,6 @@ export const getCurrentUser = async () => {
     // 토큰 만료 시 RefreshToken으로 갱신 시도
     if (payload.exp * 1000 < Date.now()) {
       try {
-        console.log('Token expired, attempting refresh...');
         await refreshAccessToken();
         // 갱신 성공 시 다시 getCurrentUser 재귀 호출
         return await getCurrentUser();

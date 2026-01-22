@@ -21,12 +21,22 @@ class WebSocketSingleton {
     }
 
     connect() {
+        // 오프라인 체크
+        try {
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                console.warn("⚠️ 오프라인 상태: WebSocket 연결을 건너뜁니다");
+                return null;
+            }
+        } catch (_) {}
+        
         // Redux에서 사용자 이메일 가져오기
         const state = store.getState();
         const userEmail = state.auth?.user?.email;
         
-        // 이미 같은 사용자로 연결되어 있으면 재사용
-        if (this.socket && this.socket.readyState === WebSocket.OPEN && this.connectedUserEmail === userEmail) {
+        // 같은 사용자로 이미 연결되어 있으면 재사용
+        if (this.socket && 
+            this.socket.readyState === WebSocket.OPEN && 
+            this.connectedUserEmail === userEmail) {
             return this.socket;
         }
         

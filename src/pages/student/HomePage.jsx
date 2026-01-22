@@ -103,7 +103,7 @@ export default function HomePage() {
     return {
       action: "status",
       data: {
-        tutorEmail: user.tutorEmail || "unknown@example.com",
+        tutorEmail: user.tutorEmail,
         studentEmail: user.email,
         status: "active",
         room: "no room",  // 홈은 "no room"

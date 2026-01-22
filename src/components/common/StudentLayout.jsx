@@ -19,6 +19,9 @@ export default function StudentLayout({
   const { preloadGlobal } = useWhisperGlobalPreload();
   const whisperStatus = useSelector(selectWhisperPreloadStatus);
   const whisperProgress = useSelector(selectWhisperProgress);
+  const dailyRecordingMs = useSelector((state) => state.speakingStats?.dailyStats?.totalRecordingTime || 0);
+  const sessionRecordingMs = useSelector((state) => state.speakingStats?.currentSession?.totalRecordingTime || 0);
+  const todayTimeSec = Math.floor((dailyRecordingMs + sessionRecordingMs) / 1000);
 
   // 마운트 시 1회 preload (이미 ready면 스킵)
   useEffect(() => {
@@ -28,7 +31,7 @@ export default function StudentLayout({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: '#f5f5f5' }}>
       <Header 
-        todayTime={todayTime} 
+        todayTime={todayTimeSec} 
         onTutorSearchClick={onTutorSearchClick}
         onNotificationClick={onNotificationClick}
         unreadNotificationCount={unreadNotificationCount}

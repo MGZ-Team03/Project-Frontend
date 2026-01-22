@@ -1,6 +1,6 @@
 // 튜터 실시간 모니터링 대시보드 (목업)
 
-import { useState, useEffect } from 'react';
+import {useEffect, useState} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { useWebSocket } from '../../hooks/useWebSocket';
@@ -22,8 +22,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Alert,
-  Snackbar,
 } from '@mui/material';
 import {
   Circle,
@@ -44,9 +42,10 @@ import { getTutorRequests } from '../../api/tutorRegister';
 
 function getStatusColor(status) {
   switch (status) {
-    case 'speaking': return 'success';
-    case 'listening': return 'warning';
-    case 'inactive': return 'error';
+    case 'speaking': return 'success';   // 🟢 발음 중
+    case 'listening': return 'warning';  // 🟠 듣기만
+    case 'idle': return 'error';         // 🔴 미활동 (개입 필요!)
+    case 'inactive': return 'default';   // ⚪ 오프라인
     default: return 'default';
   }
 }
@@ -55,7 +54,8 @@ function getStatusLabel(status) {
   switch (status) {
     case 'speaking': return '발음 중';
     case 'listening': return '듣기만';
-    case 'inactive': return '미활동';
+    case 'idle': return '미활동';         // 빨강 (개입 필요)
+    case 'inactive': return '오프라인';   // 회색
     default: return '오프라인';
   }
 }
@@ -100,7 +100,7 @@ function StudentCard({ student, onClick, onFeedbackClick, tutorEmail, disabled, 
                   <Warning color="warning" sx={{ fontSize: 18 }} />
                 </Tooltip>
               )}
-              {student.alert && (
+              {student.alert && student.status !== 'inactive' && (
                 <Chip label="개입 필요" size="small" color="error" />
               )}
             </Stack>
@@ -192,7 +192,7 @@ function StudentCard({ student, onClick, onFeedbackClick, tutorEmail, disabled, 
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const tutorEmail = useSelector(state => state.auth.user?.email) || 'hw_plus@naver.com';
+  const tutorEmail = useSelector(state => state.auth.user?.email);
   
   // 학생 목록 (승인된 학생만)
   const [students, setStudents] = useState([]);
@@ -214,7 +214,6 @@ export default function DashboardPage() {
     try {
       setLoadingStudents(true);
       const response = await getMyStudents();
-      console.log('📚 학생 목록 응답:', response);
       
       // 백엔드 응답 구조에 맞게 파싱
       const studentList = response.data?.students || response.students || [];
@@ -307,6 +306,7 @@ export default function DashboardPage() {
   const speakingStudents = students.filter(s => s.status === 'speaking');
   const warningStudents = students.filter(s => s.warning || s.alert);
 
+
   const handleStudentClick = (email) => {
     navigate(`/tutor/students/${email}`);
   };
@@ -395,7 +395,7 @@ export default function DashboardPage() {
                   {speakingStudents.length}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  발음 중
+                  학습 중
                 </Typography>
               </CardContent>
             </Card>
@@ -424,6 +424,7 @@ export default function DashboardPage() {
             <Circle sx={{ fontSize: 10, color: 'warning.main' }} />
             <Typography variant="caption">발음 비율 낮음</Typography>
           </Stack>
+
           <Stack direction="row" alignItems="center" spacing={0.5}>
             <Circle sx={{ fontSize: 10, color: 'error.main' }} />
             <Typography variant="caption">미활동</Typography>

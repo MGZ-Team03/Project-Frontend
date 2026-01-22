@@ -1,12 +1,37 @@
 import axios from './axios';
 
 function normalizeSentences(data) {
-  // Accept: ["a","b"] OR {sentences:["a","b"]} OR {sentences:[{text:""}]}
+  // Accept:
+  // - ["a","b"]
+  // - {sentences:["a","b"]}
+  // - {sentences:[{text:""}]}
+  // - {sentences:[{english:"..."}]}
   const raw = Array.isArray(data) ? data : (data?.sentences ?? data?.items ?? []);
   return (raw || [])
-    .map((s) => (typeof s === 'string' ? s : s?.text))
+    .map((s) => (typeof s === 'string' ? s : (s?.text ?? s?.english)))
     .filter((t) => typeof t === 'string' && t.trim().length > 0)
     .map((t) => t.trim());
+}
+
+/**
+ * 문장 생성 API (세션 포함)
+ * POST /api/sentences/generate
+ * @param {Object} params
+ * @param {string} params.topic
+ * @param {string} params.difficulty
+ * @returns {Promise<{sessionId: string|null, sentences: string[]}>}
+ */
+export async function generatePracticeSession({ topic, difficulty }) {
+  const res = await axios.post(
+    '/api/sentences/generate',
+    { topic, difficulty },
+    { timeout: 60000 }
+  );
+
+  return {
+    sessionId: res?.data?.sessionId ?? null,
+    sentences: normalizeSentences(res.data),
+  };
 }
 
 /**
@@ -18,13 +43,9 @@ function normalizeSentences(data) {
  * @returns {Promise<string[]>}
  */
 export async function generatePracticeSentences({ topic, difficulty }) {
-  // 문장 생성은 서버 작업이 길 수 있어 timeout을 넉넉히 둠
-  const res = await axios.post(
-    '/api/sentences/generate',
-    { topic, difficulty },
-    { timeout: 60000 }
-  );
-  return normalizeSentences(res.data);
+  // 하위호환 유지: 기존처럼 문장 텍스트만 반환
+  const { sentences } = await generatePracticeSession({ topic, difficulty });
+  return sentences;
 }
 
 /**
@@ -66,6 +87,27 @@ export async function getSentenceFeedback({ originalText, userText, difficulty =
     { originalText, userText, difficulty },
     { timeout: 30000 }
   );
+  return res.data;
+}
+
+/**
+ * 문장 연습 TTS 사전처리 상태/통계 조회
+ * GET /api/sentences/audio/{sessionId}
+ * @param {string} sessionId
+ * @param {Object=} options
+ * @param {AbortSignal=} options.signal
+ * @returns {Promise<{
+ *   success: boolean,
+ *   sessionId: string,
+ *   sentences: Array<{index:number, status:string, audioUrl?:string|null, durationMs?:number|null, english?:string, korean?:string, voiceId?:string}>,
+ *   summary?: {totalCount:number, completedCount:number, failedCount:number, pendingCount:number, totalDurationMs?:number, durationCompleteCount?:number}
+ * }>}
+ */
+export async function getSentenceAudioSession(sessionId, options = {}) {
+  const res = await axios.get(`/api/sentences/audio/${encodeURIComponent(sessionId)}`, {
+    timeout: 30000,
+    signal: options.signal,
+  });
   return res.data;
 }
 
