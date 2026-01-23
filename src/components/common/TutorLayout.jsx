@@ -1,11 +1,19 @@
 import { Box } from '@mui/material';
 import Header from './Header';
-import TutorBottomNav from './TutorBottomNav';
 
-export default function TutorLayout({ children, studentCount = 0 }) {
+export default function TutorLayout({ 
+  children, 
+  studentCount = 0,
+  onNotificationClick,
+  unreadNotificationCount = 0,
+}) {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: '#f5f5f5' }}>
-      <Header studentCount={studentCount} />
+      <Header 
+        studentCount={studentCount}
+        onNotificationClick={onNotificationClick}
+        unreadNotificationCount={unreadNotificationCount}
+      />
       
       <Box 
         sx={{ 
@@ -13,13 +21,10 @@ export default function TutorLayout({ children, studentCount = 0 }) {
           display: 'flex', 
           flexDirection: 'column',
           p: 3,
-          pb: 10, // 하단 네비게이션 공간
         }}
       >
         {children}
       </Box>
-
-      <TutorBottomNav />
     </Box>
   );
 }

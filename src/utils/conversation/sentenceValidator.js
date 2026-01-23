@@ -79,7 +79,8 @@ function getFeedback(finalScore, wordMatch, editSimilarity) {
     };
   }
 
-  if (finalScore >= 85) {
+  // 통과 기준에 맞춘 긍정 피드백(다음 문장 이동 가능)
+  if (finalScore >= 60) {
     return {
       message: "잘했어요! 다음 문장으로 이동할 수 있습니다. ✅",
       severity: "success"
@@ -152,8 +153,8 @@ export function validateSentence(expected, spoken) {
   // 5. 가중 평균으로 최종 점수 계산
   const finalScore = (wordMatch * 0.7) + (editSimilarity * 0.3);
 
-  // 6. 통과 기준: 85% 이상 (더 엄격한 기준)
-  const passed = finalScore >= 85;
+  // 6. 통과 기준: 60% 이상
+  const passed = finalScore >= 65;
 
   // 7. 피드백 생성
   const feedback = getFeedback(finalScore, wordMatch, editSimilarity);

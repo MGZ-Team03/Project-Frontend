@@ -1,4 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { getStorageKey, migrateOldStatsKey } from '../../utils/storageKeys';
 
 const STORAGE_KEY = 'speaktracker_daily_stats';
 
@@ -14,17 +15,8 @@ const initialSessionState = {
   startedAt: null,
 
   // 시간 측정 (ms)
-  totalSessionTime: 0,
-  userSpeakingTime: 0,
-  ttsPlaybackTime: 0,
-  systemLoadingTime: 0,
-
-  // TTS 추적 (Response Latency 계산용)
-  lastTtsEndTime: null,
-  _ttsStartTime: null,
-
-  // 시스템 로딩 추적
-  _loadingStartTime: null,
+  totalRecordingTime: 0, // 녹음 버튼 누른 총 시간
+  userSpeakingTime: 0,   // 실제 발화 시간
 
   // 문장 연습 (Pace Ratio 계산용)
   currentPractice: {
@@ -35,37 +27,33 @@ const initialSessionState = {
 
   // 세션 내 기록
   practiceRecords: [], // [{sentenceId, paceRatio, userTime, refTime, timestamp}]
-  responseLatencies: [], // [latency in ms]
+  responseQualities: [], // [{durationMs, wordCount, wordsPerMinute, fluencyScore, overallScore, timestamp}]
 };
 
 // 초기 일별 통계 상태
 const initialDailyStats = {
   date: null,
 
-  // 누적 시간
-  totalSpeakingTime: 0,
-  totalSessionTime: 0,
-  totalTtsPlaybackTime: 0,
-  totalSystemLoadingTime: 0,
-
-  // 집계
+  // 기본 통계
+  totalRecordingTime: 0, // 일별 총 녹음 시간 (ms)
+  totalSpeakingTime: 0,  // 일별 총 발화 시간 (ms)
   sessionsCount: 0,
   practiceCount: 0,
-  chatTurnsCount: 0,
 
-  // 평균 지표
+  // 4대 지표 (일별 평균)
   avgPaceRatio: 0,
-  avgResponseLatency: 0,
   avgNetSpeakingDensity: 0,
+  avgResponseQuality: 0,
 
-  // 상세 기록
+  // 상세 기록 (분석용)
   paceRatios: [],
-  responseLatencies: [],
+  responseQualities: [],
 };
 
 const initialState = {
   currentSession: { ...initialSessionState },
   dailyStats: { ...initialDailyStats },
+  userEmail: null,  // User context for localStorage key
   isLoading: false,
   error: null,
 };
@@ -73,15 +61,41 @@ const initialState = {
 // localStorage에서 일별 통계 로드
 export const loadStatsFromStorage = createAsyncThunk(
   'speakingStats/loadFromStorage',
-  async () => {
+  async ({ userEmail }, { rejectWithValue }) => {
+    if (!userEmail) {
+      return rejectWithValue('No user email provided');
+    }
+
     const todayKey = getTodayKey();
-    const stored = localStorage.getItem(STORAGE_KEY);
+
+    // Migrate old static key to user-specific key (one-time migration)
+    migrateOldStatsKey(userEmail);
+
+    // Use user-specific storage key
+    const storageKey = getStorageKey(userEmail);
+    const stored = localStorage.getItem(storageKey);
 
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
         if (parsed.date === todayKey) {
-          return parsed;
+          // 스키마 마이그레이션: 누락 필드 보강 + 불필요 필드 제거
+          const merged = {
+            ...initialDailyStats,
+            ...parsed,
+            date: todayKey,
+          };
+          merged.paceRatios = Array.isArray(parsed?.paceRatios) ? parsed.paceRatios : [];
+          merged.responseQualities = Array.isArray(parsed?.responseQualities) ? parsed.responseQualities : [];
+
+          // 평균이 없거나 0으로만 저장된 경우에도 배열 기반으로 재계산
+          if (merged.responseQualities.length > 0) {
+            merged.avgResponseQuality =
+              merged.responseQualities.reduce((a, b) => a + (b?.overallScore || 0), 0) / merged.responseQualities.length;
+          }
+
+          console.log(`✓ Loaded stats for ${userEmail}:`, merged);
+          return { stats: merged, userEmail };
         }
       } catch (e) {
         console.error('Failed to parse stored stats:', e);
@@ -89,7 +103,9 @@ export const loadStatsFromStorage = createAsyncThunk(
     }
 
     // 날짜가 다르거나 데이터 없으면 새로 시작
-    return { ...initialDailyStats, date: todayKey };
+    const freshStats = { ...initialDailyStats, date: todayKey };
+    console.log(`✓ Fresh stats for ${userEmail}`);
+    return { stats: freshStats, userEmail };
   }
 );
 
@@ -97,6 +113,11 @@ const speakingStatsSlice = createSlice({
   name: 'speakingStats',
   initialState,
   reducers: {
+    // ===== 사용자 컨텍스트 =====
+    setUserContext: (state, action) => {
+      state.userEmail = action.payload.userEmail;
+    },
+
     // ===== 세션 관리 =====
     startSession: (state, action) => {
       const now = Date.now();
@@ -113,10 +134,8 @@ const speakingStatsSlice = createSlice({
       if (!session.sessionId) return;
 
       // dailyStats에 누적
+      state.dailyStats.totalRecordingTime += session.totalRecordingTime;
       state.dailyStats.totalSpeakingTime += session.userSpeakingTime;
-      state.dailyStats.totalSessionTime += session.totalSessionTime;
-      state.dailyStats.totalTtsPlaybackTime += session.ttsPlaybackTime;
-      state.dailyStats.totalSystemLoadingTime += session.systemLoadingTime;
       state.dailyStats.sessionsCount += 1;
 
       // Pace Ratio 누적
@@ -130,27 +149,12 @@ const speakingStatsSlice = createSlice({
         state.dailyStats.avgPaceRatio =
           allRatios.reduce((a, b) => a + b, 0) / allRatios.length;
       }
-
-      // Response Latency 누적
-      if (session.responseLatencies.length > 0) {
-        state.dailyStats.chatTurnsCount += session.responseLatencies.length;
-        session.responseLatencies.forEach((latency) => {
-          state.dailyStats.responseLatencies.push(latency);
-        });
-        // 평균 재계산
-        const allLatencies = state.dailyStats.responseLatencies;
-        state.dailyStats.avgResponseLatency =
-          allLatencies.reduce((a, b) => a + b, 0) / allLatencies.length;
-      }
+      // Response Quality는 addResponseQuality에서 일별 통계를 실시간 누적하므로 여기서는 누적하지 않음
 
       // Net Speaking Density 평균 재계산
-      const availableTime =
-        state.dailyStats.totalSessionTime -
-        state.dailyStats.totalTtsPlaybackTime -
-        state.dailyStats.totalSystemLoadingTime;
-      if (availableTime > 0) {
+      if (state.dailyStats.totalRecordingTime > 0) {
         state.dailyStats.avgNetSpeakingDensity =
-          (state.dailyStats.totalSpeakingTime / availableTime) * 100;
+          (state.dailyStats.totalSpeakingTime / state.dailyStats.totalRecordingTime) * 100;
       }
 
       // 날짜 설정
@@ -158,16 +162,19 @@ const speakingStatsSlice = createSlice({
         state.dailyStats.date = getTodayKey();
       }
 
-      // localStorage에 저장
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.dailyStats));
+      // localStorage에 저장 (사용자별)
+      if (state.userEmail) {
+        const storageKey = getStorageKey(state.userEmail);
+        localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
+      }
 
       // 세션 초기화
       state.currentSession = { ...initialSessionState };
     },
 
     // ===== 시간 업데이트 =====
-    updateSessionTime: (state, action) => {
-      state.currentSession.totalSessionTime += action.payload.deltaTime;
+    updateRecordingTime: (state, action) => {
+      state.currentSession.totalRecordingTime += action.payload.deltaTime;
     },
 
     updateSpeakingTime: (state, action) => {
@@ -177,52 +184,38 @@ const speakingStatsSlice = createSlice({
       }
     },
 
-    // ===== TTS 재생 추적 =====
-    ttsPlaybackStarted: (state, action) => {
-      state.currentSession._ttsStartTime = action.payload.startTime;
-    },
+    // ===== 응답 품질 기록 (ChatPage용) =====
+    addResponseQuality: (state, action) => {
+      const { durationMs, wordCount, wordsPerMinute, fluencyScore, overallScore } = action.payload;
 
-    ttsPlaybackEnded: (state, action) => {
-      const { duration, endTime } = action.payload;
-      state.currentSession.ttsPlaybackTime += duration;
-      state.currentSession.lastTtsEndTime = endTime;
-      state.currentSession._ttsStartTime = null;
-    },
+      if (state.currentSession.sessionType === 'chat') {
+        const record = {
+          durationMs,
+          wordCount,
+          wordsPerMinute,
+          fluencyScore,
+          overallScore,
+          timestamp: Date.now(),
+        };
+        state.currentSession.responseQualities.push(record);
 
-    // ===== 시스템 로딩 추적 =====
-    systemLoadingStarted: (state) => {
-      state.currentSession._loadingStartTime = Date.now();
-    },
+        // 일별 통계도 실시간 누적 + 평균 재계산 + localStorage 저장
+        if (!state.dailyStats.date) state.dailyStats.date = getTodayKey();
+        if (!Array.isArray(state.dailyStats.responseQualities)) state.dailyStats.responseQualities = [];
+        state.dailyStats.responseQualities.push(record);
 
-    systemLoadingEnded: (state) => {
-      if (state.currentSession._loadingStartTime) {
-        const duration = Date.now() - state.currentSession._loadingStartTime;
-        state.currentSession.systemLoadingTime += duration;
-        state.currentSession._loadingStartTime = null;
-      }
-    },
+        const allQualities = state.dailyStats.responseQualities;
+        state.dailyStats.avgResponseQuality =
+          allQualities.length > 0
+            ? (allQualities.reduce((a, b) => a + (b?.overallScore || 0), 0) / allQualities.length)
+            : 0;
 
-    // ===== 발화 감지 이벤트 =====
-    userSpeakingStarted: (state, action) => {
-      const { startTime } = action.payload;
-
-      // Response Latency 계산 (ChatPage용)
-      if (
-        state.currentSession.sessionType === 'chat' &&
-        state.currentSession.lastTtsEndTime
-      ) {
-        const latency = startTime - state.currentSession.lastTtsEndTime;
-        // 유효한 범위만 기록 (0.1초 ~ 30초)
-        if (latency > 100 && latency < 30000) {
-          state.currentSession.responseLatencies.push(latency);
+        // localStorage에 저장 (사용자별)
+        if (state.userEmail) {
+          const storageKey = getStorageKey(state.userEmail);
+          localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
         }
-        // 한 번 기록 후 초기화 (중복 방지)
-        state.currentSession.lastTtsEndTime = null;
       }
-    },
-
-    userSpeakingEnded: () => {
-      // 현재는 특별한 처리 없음
     },
 
     // ===== 문장 연습 (Pace Ratio) =====
@@ -242,6 +235,15 @@ const speakingStatsSlice = createSlice({
     updatePracticeSpeakingTime: (state, action) => {
       state.currentSession.currentPractice.userSpeakingDuration +=
         action.payload.deltaTime;
+    },
+
+    resetCurrentPractice: (state) => {
+      const { sentenceId, referenceAudioDuration } = state.currentSession.currentPractice;
+      state.currentSession.currentPractice = {
+        sentenceId,  // 유지
+        referenceAudioDuration,  // 유지
+        userSpeakingDuration: 0,  // 초기화
+      };
     },
 
     completePractice: (state, action) => {
@@ -276,7 +278,11 @@ const speakingStatsSlice = createSlice({
         ...initialDailyStats,
         date: getTodayKey(),
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.dailyStats));
+      // localStorage에 저장 (사용자별)
+      if (state.userEmail) {
+        const storageKey = getStorageKey(state.userEmail);
+        localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
+      }
     },
 
     // 수동 저장 (필요시)
@@ -284,7 +290,11 @@ const speakingStatsSlice = createSlice({
       if (!state.dailyStats.date) {
         state.dailyStats.date = getTodayKey();
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.dailyStats));
+      // localStorage에 저장 (사용자별)
+      if (state.userEmail) {
+        const storageKey = getStorageKey(state.userEmail);
+        localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
+      }
     },
   },
 
@@ -295,7 +305,8 @@ const speakingStatsSlice = createSlice({
       })
       .addCase(loadStatsFromStorage.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.dailyStats = action.payload;
+        state.dailyStats = action.payload.stats;
+        state.userEmail = action.payload.userEmail;  // Set user context
       })
       .addCase(loadStatsFromStorage.rejected, (state, action) => {
         state.isLoading = false;
@@ -305,19 +316,16 @@ const speakingStatsSlice = createSlice({
 });
 
 export const {
+  setUserContext,
   startSession,
   endSession,
-  updateSessionTime,
+  updateRecordingTime,
   updateSpeakingTime,
-  ttsPlaybackStarted,
-  ttsPlaybackEnded,
-  systemLoadingStarted,
-  systemLoadingEnded,
-  userSpeakingStarted,
-  userSpeakingEnded,
+  addResponseQuality,
   startPractice,
   setReferenceAudioDuration,
   updatePracticeSpeakingTime,
+  resetCurrentPractice,
   completePractice,
   resetDailyStats,
   saveDailyStats,

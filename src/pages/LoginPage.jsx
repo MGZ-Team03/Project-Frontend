@@ -27,6 +27,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading, error, user } = useSelector((state) => state.auth);
 
+
   // 로그인 성공 시 역할에 따라 리다이렉트
   useEffect(() => {
     if (isAuthenticated && user) {

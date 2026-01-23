@@ -1,5 +1,6 @@
-import { useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import {useLocation, useNavigate} from 'react-router-dom';
+import {useCallback, useEffect, useState} from 'react';
+import { useSelector } from 'react-redux';
 import {
   Box,
   Card,
@@ -15,6 +16,8 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import {
   MenuBook,
@@ -24,14 +27,102 @@ import {
   TrendingUp,
 } from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
+import TutorSearchDialog from '../../components/student/TutorSearchDialog';
 import { scenarios } from '../../data/conversation/scenarios';
+import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
+import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
+import {useStudentStatus} from "../../api/useStudentStatus.js";
+import { getNotifications } from '../../api/notifications';
 
 export default function HomePage() {
+  const user = useSelector(state => state.auth.user);
   const navigate = useNavigate();
+  const whisperStatus = useSelector(selectWhisperPreloadStatus);
   const [practiceDifficulty, setPracticeDifficulty] = useState('중');
-  const [practiceTopicId, setPracticeTopicId] = useState('restaurant');
+  const [practiceTopicId, setPracticeTopicId] = useState('small_talk');
   const [chatDifficulty, setChatDifficulty] = useState('중');
-  const [chatScenario, setChatScenario] = useState('restaurant');
+  const [chatScenario, setChatScenario] = useState('small_talk');
+  const location = useLocation().pathname.split('/')[1];
+
+  useStudentStatus(user, location);
+  const [tutorSearchOpen, setTutorSearchOpen] = useState(false);
+  
+  // 알림 관련 state
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+
+  const studentEmail = user?.email;
+
+  // 알림 개수 조회
+  const loadUnreadCount = async () => {
+    if (!studentEmail) return;
+    try {
+      const response = await getNotifications(false);
+      // API 응답 구조: { success: true, data: { notifications: [...], unreadCount: n } }
+      // 또는: { notifications: [...], unreadCount: n }
+      const unread = response.data?.unreadCount || response.unreadCount || 0;
+      setUnreadCount(unread);
+    } catch (err) {
+      console.error('알림 개수 조회 실패:', err);
+    }
+  };
+
+  // 페이지 로드 시 알림 개수 조회
+  useEffect(() => {
+    if (studentEmail) {
+      loadUnreadCount();
+    }
+  }, [studentEmail]);
+
+  // 메시지 핸들러 함수 (WebSocket 메시지 수신 시 호출)
+  const handleWebSocketMessage = useCallback((data) => {
+    // 승인 알림
+    if (data.type === 'TUTOR_REQUEST_APPROVED') {
+      setUnreadCount(prev => prev + 1);  // 즉시 카운트 증가
+      setSnackbar({
+        open: true,
+        message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
+        severity: 'success'
+      });
+    }
+    
+    // 거부 알림
+    if (data.type === 'TUTOR_REQUEST_REJECTED') {
+      setUnreadCount(prev => prev + 1);  // 즉시 카운트 증가
+      const reason = data.data.rejection_reason || '사유 없음';
+      setSnackbar({
+        open: true,
+        message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
+        severity: 'error'
+      });
+    }
+  }, []);
+
+
+  // 웹소켓 연결만 수행 (데이터 전송 없음)
+  const getData = useCallback(() => {
+    if(!user?.email) {
+      return null;
+    }
+    return {
+      action: "status",
+      data: {
+        tutorEmail: user.tutorEmail,
+        studentEmail: user.email,
+        status: "active",
+        room: "no room",  // 홈은 "no room"
+        assignedAt: new Date().toISOString().split("T")[0],
+      }
+    };
+  },[user?.email]);
+
+  const socket = useWebSocket(getData, {
+    sendImmediately: true,
+    enableInterval: true,
+    interval: 5000,
+    onMessage: handleWebSocketMessage  // 메시지 핸들러 추가
+  });
+
 
   // TODO: 실제 데이터는 Redux나 API에서 가져오기
   const todayStats = {
@@ -49,8 +140,13 @@ export default function HomePage() {
   };
 
   return (
-    <StudentLayout todayTime={todayStats.totalTime}>
-      <Box sx={{ maxWidth: 800, mx: 'auto', width: '100%' }}>
+    <>
+      <StudentLayout 
+        todayTime={todayStats.totalTime} 
+        onTutorSearchClick={() => setTutorSearchOpen(true)}
+        unreadNotificationCount={unreadCount}
+      >
+        <Box sx={{ maxWidth: 800, mx: 'auto', width: '100%' }}>
         {/* 환영 메시지 */}
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
@@ -226,6 +322,7 @@ export default function HomePage() {
               <Button
                 variant="contained"
                 fullWidth
+                disabled={whisperStatus !== 'ready'}
                 onClick={() =>
                   navigate('/practice', {
                     state: { difficulty: practiceDifficulty, topicId: practiceTopicId },
@@ -236,7 +333,7 @@ export default function HomePage() {
                   py: 1.5,
                 }}
               >
-                시작하기
+                {whisperStatus === 'loading' ? '음성인식 로드 중...' : '시작하기'}
               </Button>
             </CardContent>
           </Card>
@@ -308,6 +405,7 @@ export default function HomePage() {
               <Button
                 variant="contained"
                 fullWidth
+                disabled={whisperStatus !== 'ready'}
                 onClick={() => navigate('/chat', {
                   state: {
                     difficulty: chatDifficulty,
@@ -319,7 +417,7 @@ export default function HomePage() {
                   py: 1.5,
                 }}
               >
-                시작하기
+                {whisperStatus === 'loading' ? '음성인식 로드 중...' : '시작하기'}
               </Button>
             </CardContent>
           </Card>
@@ -339,5 +437,28 @@ export default function HomePage() {
         </Card>
       </Box>
     </StudentLayout>
+
+    {/* 튜터 검색 다이얼로그 (알림 표시 포함) */}
+    <TutorSearchDialog
+      open={tutorSearchOpen}
+      onClose={() => setTutorSearchOpen(false)}
+      onUpdate={loadUnreadCount}
+    />
+    
+    {/* 실시간 알림 Snackbar */}
+    <Snackbar
+      open={snackbar.open}
+      autoHideDuration={6000}
+      onClose={() => setSnackbar({ ...snackbar, open: false })}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+    >
+      <Alert
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        severity={snackbar.severity}
+      >
+        {snackbar.message}
+      </Alert>
+    </Snackbar>
+    </>
   );
 }

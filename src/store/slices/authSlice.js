@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { login as cognitoLogin, logout as cognitoLogout, getCurrentUser } from '../../api/auth';
+import { getStorageKey } from '../../utils/storageKeys';
 
 // 로그인 액션
 export const login = createAsyncThunk(
@@ -16,7 +17,16 @@ export const login = createAsyncThunk(
 );
 
 // 로그아웃 액션
-export const logout = createAsyncThunk('auth/logout', async () => {
+export const logout = createAsyncThunk('auth/logout', async (_, { getState }) => {
+  const { user } = getState().auth;
+
+  // Clear user-specific stats before logging out
+  if (user?.email) {
+    const statsKey = getStorageKey(user.email);
+    localStorage.removeItem(statsKey);
+    console.log(`✓ Cleared stats for ${user.email}`);
+  }
+
   cognitoLogout();
   return null;
 });
