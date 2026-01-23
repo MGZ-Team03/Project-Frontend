@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useDispatch } from 'react-redux';
 import { requestTTS } from '../api/tts';
-import { ttsPlaybackStarted, ttsPlaybackEnded } from '../store/slices/speakingStatsSlice';
 
 // key(text+voice) -> audioUrl
 const ttsCache = new Map();
 // key(text+voice) -> Promise<audioUrl>
 const ttsInFlight = new Map();
 
-function makeKey(text, voiceId) {
-  return `${voiceId || 'default'}::${text}`;
+function makeKey(text, voiceId, language) {
+  return `${voiceId || 'default'}::${language || 'default'}::${text}`;
 }
 
 /**
@@ -18,7 +16,6 @@ function makeKey(text, voiceId) {
  * SQS 비동기 처리 지원 (캐시 미스 시 폴링)
  */
 export function useTTSAudio() {
-  const dispatch = useDispatch();
   const [isPlaying, setIsPlaying] = useState(false);
   const [ttsStatus, setTtsStatus] = useState('idle'); // 'idle' | 'generating' | 'playing'
   const [error, setError] = useState(null);
@@ -34,9 +31,6 @@ export function useTTSAudio() {
           const endTime = Date.now();
           const duration = endTime - playbackStartTimeRef.current;
           setLastPlaybackDuration(duration);
-
-          // Redux에 알림
-          dispatch(ttsPlaybackEnded({ duration, endTime }));
         }
 
         audioRef.current.pause();
@@ -47,7 +41,7 @@ export function useTTSAudio() {
       setTtsStatus('idle');
       playbackStartTimeRef.current = null;
     }
-  }, [dispatch]);
+  }, []);
 
   // 페이지 이동/언마운트 시에도 재생 중이면 즉시 중지
   useEffect(() => {
@@ -56,19 +50,64 @@ export function useTTSAudio() {
     };
   }, [stop]);
 
-  const playText = useCallback(async (text, { voiceId } = {}) => {
-    if (!text || typeof text !== 'string') return;
+  const playUrl = useCallback(async (audioUrl) => {
+    if (!audioUrl || typeof audioUrl !== 'string') return null;
     setError(null);
-
-    const key = makeKey(text, voiceId);
 
     try {
       stop();
 
-      // cache hit
+      setTtsStatus('playing');
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.onplay = () => {
+        const startTime = Date.now();
+        playbackStartTimeRef.current = startTime;
+      };
+
+      audio.onended = () => {
+        const endTime = Date.now();
+        const duration = playbackStartTimeRef.current
+          ? endTime - playbackStartTimeRef.current
+          : 0;
+
+        setLastPlaybackDuration(duration);
+        setIsPlaying(false);
+        setTtsStatus('idle');
+        playbackStartTimeRef.current = null;
+      };
+
+      audio.onerror = () => {
+        setError('오디오 재생에 실패했습니다.');
+        setIsPlaying(false);
+        setTtsStatus('idle');
+        playbackStartTimeRef.current = null;
+      };
+
+      setIsPlaying(true);
+      await audio.play();
+      return audio.duration ? audio.duration * 1000 : null;
+    } catch (e) {
+      setIsPlaying(false);
+      setTtsStatus('idle');
+      playbackStartTimeRef.current = null;
+      setError(e?.message || 'TTS 재생 실패');
+      return null;
+    }
+  }, [stop]);
+
+  const playText = useCallback(async (text, { voiceId, language } = {}) => {
+    if (!text || typeof text !== 'string') return null;
+    setError(null);
+
+    const key = makeKey(text, voiceId, language);
+
+    try {
+      stop();
+
       let audioUrl = ttsCache.get(key);
       if (!audioUrl) {
-        // TTS 생성 중 상태 표시
         setTtsStatus('generating');
 
         let promise = ttsInFlight.get(key);
@@ -76,9 +115,9 @@ export function useTTSAudio() {
           promise = requestTTS({
             text,
             voiceId,
+            language,
             pollingOptions: {
               onRetry: (attempt, maxAttempts) => {
-                // 폴링 진행 상태를 로그로 표시 (필요시 UI에 반영 가능)
                 console.log(`TTS 생성 중... (${attempt}/${maxAttempts})`);
               }
             }
@@ -91,55 +130,15 @@ export function useTTSAudio() {
       }
 
       if (!audioUrl) throw new Error('TTS audioUrl이 없습니다.');
-
-      // 재생 준비
-      setTtsStatus('playing');
-
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
-
-      // 재생 시작 이벤트
-      audio.onplay = () => {
-        const startTime = Date.now();
-        playbackStartTimeRef.current = startTime;
-        dispatch(ttsPlaybackStarted({ startTime }));
-      };
-
-      // 재생 종료 이벤트
-      audio.onended = () => {
-        const endTime = Date.now();
-        const duration = playbackStartTimeRef.current
-          ? endTime - playbackStartTimeRef.current
-          : 0;
-
-        setLastPlaybackDuration(duration);
-        setIsPlaying(false);
-        setTtsStatus('idle');
-        playbackStartTimeRef.current = null;
-
-        // Redux에 알림
-        dispatch(ttsPlaybackEnded({ duration, endTime }));
-      };
-
-      audio.onerror = () => {
-        setError('오디오 재생에 실패했습니다.');
-        setIsPlaying(false);
-        setTtsStatus('idle');
-        playbackStartTimeRef.current = null;
-      };
-
-      setIsPlaying(true);
-      await audio.play();
-
-      // 오디오 duration 반환 (가능한 경우)
-      return audio.duration ? audio.duration * 1000 : null;
+      return await playUrl(audioUrl);
     } catch (e) {
       setIsPlaying(false);
       setTtsStatus('idle');
       playbackStartTimeRef.current = null;
       setError(e?.message || 'TTS 재생 실패');
+      return null;
     }
-  }, [stop, dispatch]);
+  }, [stop, playUrl]);
 
   // 오디오 duration 가져오기
   const getAudioDuration = useCallback(() => {
@@ -151,6 +150,7 @@ export function useTTSAudio() {
 
   return {
     playText,
+    playUrl,
     stop,
     isPlaying,
     ttsStatus, // 'idle' | 'generating' | 'playing'

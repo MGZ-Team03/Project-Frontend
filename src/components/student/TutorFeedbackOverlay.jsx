@@ -27,6 +27,16 @@ import { useWebSocket } from '../../hooks/useWebSocket';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 
 /**
+ * 텍스트의 언어를 감지합니다 (한글 포함 여부 확인)
+ * @param {string} text
+ * @returns {'ko' | 'en'}
+ */
+function detectLanguage(text) {
+  // 한글 범위: U+AC00 ~ U+D7AF
+  return /[\uAC00-\uD7AF]/.test(text) ? 'ko' : 'en';
+}
+
+/**
  * 튜터 피드백 오버레이 컴포넌트
  * - ChatPage 우측 하단에 독립적으로 표시
  * - WebSocket을 통한 실시간 피드백 수신
@@ -47,13 +57,6 @@ export default function TutorFeedbackOverlay() {
 
   // WebSocket 메시지 핸들러
   const handleWebSocketMessage = (message) => {
-    console.log('📣 피드백 메시지 수신:', message);
-    console.log('🔍 메시지 타입 확인:', {
-      type: message.type,
-      typeCheck: message.type === 'feedback',
-      allKeys: Object.keys(message),
-    });
-    
     if (message.type === 'feedback') {
       const newFeedback = {
         ...message,
@@ -68,13 +71,7 @@ export default function TutorFeedbackOverlay() {
         return updated;
       });
       setUnreadCount((prev) => prev + 1);
-      
-      // 방해금지 모드일 때는 알림/확장/재생 모두 스킵
-      if (doNotDisturb) {
-        console.log('🌙 방해금지 모드: 피드백 조용히 저장됨');
-        return;
-      }
-      
+            
       // 자동 패널 확장 (설정에 따라)
       if (autoExpand) {
         setIsExpanded(true);
@@ -91,7 +88,6 @@ export default function TutorFeedbackOverlay() {
               tag: 'tutor-feedback',
               requireInteraction: false,
             });
-            console.log('✅ 알림 생성 완료:', notification);
           } catch (error) {
             console.error('❌ 알림 생성 실패:', error);
           }
@@ -104,7 +100,8 @@ export default function TutorFeedbackOverlay() {
       
       // TTS 자동 재생 (설정에 따라)
       if (autoPlayTTS && message.messageType === 'tts' && message.message) {
-        playText(message.message);
+        const language = detectLanguage(message.message);
+        playText(message.message, { language });
       }
     } else {
       console.warn('⚠️ 피드백 타입이 아닙니다:', {
@@ -127,7 +124,6 @@ export default function TutorFeedbackOverlay() {
     if ('Notification' in window) {
       if (Notification.permission === 'default') {
         Notification.requestPermission().then((permission) => {
-          console.log('✅ 알림 권한 요청 결과:', permission);
           if (permission === 'denied') {
             console.warn('⚠️ 사용자가 알림 권한을 거부했습니다. 브라우저 설정에서 허용해주세요.');
           }
@@ -198,9 +194,7 @@ export default function TutorFeedbackOverlay() {
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
-
-    utterance.onstart = () => console.log('🔊 TTS 재생 시작');
-    utterance.onend = () => console.log('✅ TTS 재생 완료');
+    
     utterance.onerror = (e) => console.error('❌ TTS 오류:', e);
 
     window.speechSynthesis.speak(utterance);

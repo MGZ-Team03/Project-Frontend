@@ -1,5 +1,20 @@
 import { pipeline, env } from '@xenova/transformers';
 
+// ONNX Runtime 및 모델 다운로드 관련 warning 필터링
+const originalWarn = console.warn;
+console.warn = function(...args) {
+  const message = args.join(' ');
+  // ONNX Runtime 모델 최적화 경고 무시
+  if (message.includes('onnxruntime') && message.includes('CleanUnusedInitializersAndNodeArgs')) {
+    return;
+  }
+  // Content-Length 관련 다운로드 경고 무시 (기능에 영향 없음)
+  if (message.includes('Unable to determine content-length')) {
+    return;
+  }
+  originalWarn.apply(console, args);
+};
+
 // Prefer browser cache for model files
 env.useBrowserCache = true;
 env.allowRemoteModels = true;

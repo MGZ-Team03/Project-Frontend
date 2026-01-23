@@ -1,230 +1,117 @@
-// 학습 통계 페이지 (목업)
+// 학습 통계 페이지 (Speaking Analytics)
 
-import {
-  Box,
-  Typography,
-  Card,
-  CardContent,
-  Grid,
-  LinearProgress,
-  Stack,
-  Divider,
-} from '@mui/material';
-import {
-  Timer,
-  RecordVoiceOver,
-  MenuBook,
-  Chat,
-  TrendingUp,
-} from '@mui/icons-material';
+import { Box, Typography, Stack, Grid } from '@mui/material';
+import { useSelector } from 'react-redux';
 import StudentLayout from '../../components/common/StudentLayout';
+import KPICards from '../../components/student/stats/KPICards';
+import WeeklySummary from '../../components/student/stats/WeeklySummary';
+import LearningTrendChart from '../../components/student/stats/LearningTrendChart';
+import ActivityCompareChart from '../../components/student/stats/ActivityCompareChart';
+import ActivityDistributionChart from '../../components/student/stats/ActivityDistributionChart';
 
-// 목업 통계 데이터
-const MOCK_TODAY = {
-  totalDuration: 25 * 60, // 25분 (초)
-  speakingDuration: 17 * 60, // 17분 (초)
-  speakingRatio: 68,
-  sentenceSessions: { duration: 15 * 60, ratio: 72 },
-  aiChatSessions: { duration: 10 * 60, ratio: 62 },
+// TODO: 백엔드 API 준비되면 아래 목 데이터 제거하고 실제 API 연동
+
+// 목업 데이터
+const MOCK_KPI = {
+  totalTime: { value: 1250, change: 65, unit: '분' },
+  speakingTime: { value: 847, change: 25, unit: '분' },
+  practiceCount: { value: 156, change: -5, unit: '회' },
 };
 
-const MOCK_WEEKLY = [
-  { day: '월', duration: 30, ratio: 70 },
-  { day: '화', duration: 25, ratio: 65 },
-  { day: '수', duration: 0, ratio: 0 },
-  { day: '목', duration: 25, ratio: 68 },
-  { day: '금', duration: 0, ratio: 0 },
-  { day: '토', duration: 0, ratio: 0 },
-  { day: '일', duration: 0, ratio: 0 },
+const MOCK_WEEKLY_SUMMARY = {
+  speakingRatio: 68,
+  avgResponse: '1.2',
+  tutorFeedbacks: 23,
+  paceRatio: '0.95',
+  totalMinutes: 375,
+  totalSessions: 12,
+};
+
+const MOCK_WEEKLY_TREND = [
+  { name: '월', speaking: 45, listening: 30, practice: 25 },
+  { name: '화', speaking: 52, listening: 35, practice: 30 },
+  { name: '수', speaking: 38, listening: 28, practice: 22 },
+  { name: '목', speaking: 65, listening: 42, practice: 35 },
+  { name: '금', speaking: 55, listening: 38, practice: 28 },
+  { name: '토', speaking: 72, listening: 48, practice: 40 },
+  { name: '일', speaking: 48, listening: 32, practice: 26 },
 ];
 
-function formatTime(seconds) {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}분 ${secs}초`;
-}
+const MOCK_MONTHLY_TREND = [
+  { name: '1월', speaking: 320, listening: 210, practice: 180 },
+  { name: '2월', speaking: 380, listening: 250, practice: 220 },
+  { name: '3월', speaking: 290, listening: 190, practice: 160 },
+  { name: '4월', speaking: 420, listening: 280, practice: 240 },
+  { name: '5월', speaking: 510, listening: 340, practice: 290 },
+  { name: '6월', speaking: 480, listening: 320, practice: 270 },
+  { name: '7월', speaking: 550, listening: 370, practice: 310 },
+  { name: '8월', speaking: 490, listening: 330, practice: 280 },
+  { name: '9월', speaking: 580, listening: 390, practice: 330 },
+  { name: '10월', speaking: 620, listening: 410, practice: 350 },
+  { name: '11월', speaking: 540, listening: 360, practice: 300 },
+  { name: '12월', speaking: 600, listening: 400, practice: 340 },
+];
 
-function StatCard({ icon, title, value, subValue, color = 'primary' }) {
-  return (
-    <Card elevation={2}>
-      <CardContent>
-        <Stack direction="row" alignItems="center" spacing={2}>
-          <Box 
-            sx={{ 
-              p: 1.5, 
-              borderRadius: 2, 
-              bgcolor: `${color}.light`,
-              color: `${color}.main`,
-            }}
-          >
-            {icon}
-          </Box>
-          <Box sx={{ flexGrow: 1 }}>
-            <Typography variant="body2" color="text.secondary">
-              {title}
-            </Typography>
-            <Typography variant="h5" fontWeight={600}>
-              {value}
-            </Typography>
-            {subValue && (
-              <Typography variant="caption" color="text.secondary">
-                {subValue}
-              </Typography>
-            )}
-          </Box>
-        </Stack>
-      </CardContent>
-    </Card>
-  );
-}
+const MOCK_ACTIVITY_COMPARE = [
+  { name: '1주차', sentence: 45, aiChat: 38 },
+  { name: '2주차', sentence: 52, aiChat: 42 },
+  { name: '3주차', sentence: 48, aiChat: 35 },
+  { name: '4주차', sentence: 60, aiChat: 48 },
+];
+
+const MOCK_ACTIVITY_DISTRIBUTION = [
+  { name: '문장 연습', value: 45, color: '#6366f1' },
+  { name: 'AI 대화', value: 35, color: '#22c55e' },
+  { name: '튜터 피드백', value: 20, color: '#fbbf24' },
+];
 
 export default function StatsPage() {
-  const todayTime = MOCK_TODAY.totalDuration;
+  const user = useSelector((state) => state.auth.user);
+
+  // TODO: 백엔드 API 준비되면 아래 주석 해제하고 목 데이터 제거
+  // const [todayStats, setTodayStats] = useState(null);
+  // const [weeklyStats, setWeeklyStats] = useState(null);
+  // const [loading, setLoading] = useState(true);
+  // const [error, setError] = useState(null);
+
+  // 임시 목 데이터 사용 (백엔드 API 준비 전)
+  const kpiData = MOCK_KPI;
+  const weeklySummary = MOCK_WEEKLY_SUMMARY;
 
   return (
-    <StudentLayout todayTime={todayTime}>
-      <Box sx={{ maxWidth: 800, mx: 'auto', width: '100%' }}>
-        {/* 오늘 학습 현황 */}
-        <Typography variant="h5" fontWeight={600} sx={{ mb: 3 }}>
-          📊 오늘 학습 현황
-        </Typography>
+    <StudentLayout todayTime={kpiData.totalTime.value}>
+      <Box sx={{ maxWidth: 1200, mx: 'auto', width: '100%' }}>
+        {/* 헤더 */}
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+          <Typography variant="h5" fontWeight={700}>
+            학습 통계
+          </Typography>
+        </Stack>
 
-        <Grid container spacing={2} sx={{ mb: 4 }}>
-          <Grid item xs={12} sm={6} md={3}>
-            <StatCard
-              icon={<Timer />}
-              title="총 학습 시간"
-              value={formatTime(MOCK_TODAY.totalDuration)}
-              color="primary"
+        {/* KPI 카드 */}
+        <KPICards kpiData={kpiData} />
+
+        {/* 이번 주 요약 */}
+        <WeeklySummary weeklySummary={weeklySummary} />
+
+        {/* 메인 차트 섹션 */}
+        <Grid container spacing={3}>
+          {/* 학습 추이 라인 차트 */}
+          <Grid item xs={12} md={8}>
+            <LearningTrendChart 
+              weeklyData={MOCK_WEEKLY_TREND}
+              monthlyData={MOCK_MONTHLY_TREND}
             />
           </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <StatCard
-              icon={<RecordVoiceOver />}
-              title="발음 시간"
-              value={formatTime(MOCK_TODAY.speakingDuration)}
-              subValue={`전체의 ${MOCK_TODAY.speakingRatio}%`}
-              color="success"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <StatCard
-              icon={<MenuBook />}
-              title="문장 연습"
-              value={formatTime(MOCK_TODAY.sentenceSessions.duration)}
-              subValue={`발음 ${MOCK_TODAY.sentenceSessions.ratio}%`}
-              color="info"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <StatCard
-              icon={<Chat />}
-              title="AI 대화"
-              value={formatTime(MOCK_TODAY.aiChatSessions.duration)}
-              subValue={`발음 ${MOCK_TODAY.aiChatSessions.ratio}%`}
-              color="secondary"
-            />
+
+          {/* 활동 비교 & 분포 차트 */}
+          <Grid item xs={12} md={4}>
+            <Stack spacing={3}>
+              <ActivityCompareChart data={MOCK_ACTIVITY_COMPARE} />
+              <ActivityDistributionChart data={MOCK_ACTIVITY_DISTRIBUTION} />
+            </Stack>
           </Grid>
         </Grid>
-
-        {/* 발음 비율 진행바 */}
-        <Card elevation={2} sx={{ mb: 4 }}>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-              오늘 발음 비율
-            </Typography>
-            <Box sx={{ mb: 1 }}>
-              <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
-                <Typography variant="body2">발음 시간</Typography>
-                <Typography variant="body2" fontWeight={600} color="primary.main">
-                  {MOCK_TODAY.speakingRatio}%
-                </Typography>
-              </Stack>
-              <LinearProgress 
-                variant="determinate" 
-                value={MOCK_TODAY.speakingRatio} 
-                sx={{ 
-                  height: 12, 
-                  borderRadius: 6,
-                  bgcolor: '#e0e0e0',
-                  '& .MuiLinearProgress-bar': {
-                    background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
-                    borderRadius: 6,
-                  }
-                }}
-              />
-            </Box>
-          </CardContent>
-        </Card>
-
-        {/* 이번 주 학습 */}
-        <Typography variant="h5" fontWeight={600} sx={{ mb: 3 }}>
-          📅 이번 주 학습
-        </Typography>
-
-        <Card elevation={2}>
-          <CardContent>
-            <Grid container spacing={1}>
-              {MOCK_WEEKLY.map((day, index) => (
-                <Grid item xs key={day.day}>
-                  <Box 
-                    sx={{ 
-                      textAlign: 'center',
-                      p: 1,
-                      borderRadius: 2,
-                      bgcolor: day.duration > 0 ? 'primary.light' : 'grey.100',
-                    }}
-                  >
-                    <Typography 
-                      variant="caption" 
-                      fontWeight={600}
-                      color={day.duration > 0 ? 'primary.main' : 'text.secondary'}
-                    >
-                      {day.day}
-                    </Typography>
-                    <Typography 
-                      variant="body2" 
-                      fontWeight={600}
-                      color={day.duration > 0 ? 'primary.main' : 'text.disabled'}
-                    >
-                      {day.duration > 0 ? `${day.duration}분` : '-'}
-                    </Typography>
-                    {day.duration > 0 && (
-                      <Typography variant="caption" color="text.secondary">
-                        {day.ratio}%
-                      </Typography>
-                    )}
-                  </Box>
-                </Grid>
-              ))}
-            </Grid>
-
-            <Divider sx={{ my: 2 }} />
-
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Box>
-                <Typography variant="body2" color="text.secondary">
-                  이번 주 총 학습
-                </Typography>
-                <Typography variant="h6" fontWeight={600}>
-                  {MOCK_WEEKLY.reduce((sum, d) => sum + d.duration, 0)}분
-                </Typography>
-              </Box>
-              <Box sx={{ textAlign: 'right' }}>
-                <Typography variant="body2" color="text.secondary">
-                  평균 발음 비율
-                </Typography>
-                <Typography variant="h6" fontWeight={600} color="success.main">
-                  <TrendingUp sx={{ fontSize: 18, mr: 0.5, verticalAlign: 'middle' }} />
-                  {Math.round(
-                    MOCK_WEEKLY.filter(d => d.duration > 0).reduce((sum, d) => sum + d.ratio, 0) /
-                    MOCK_WEEKLY.filter(d => d.duration > 0).length || 0
-                  )}%
-                </Typography>
-              </Box>
-            </Stack>
-          </CardContent>
-        </Card>
       </Box>
     </StudentLayout>
   );

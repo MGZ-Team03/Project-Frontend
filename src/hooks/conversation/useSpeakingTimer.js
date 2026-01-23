@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { getSpeakingState } from '../../utils/conversation/speakingDetector';
+import { createSpeakingDetector } from '../../utils/conversation/speakingDetector';
 import { CONFIG } from '../../config/speakingConfig';
 
 /**
@@ -21,6 +21,7 @@ export function useSpeakingTimer(isRecording, landmarks, audioVolume) {
   const landmarksRef = useRef(landmarks);
   const audioVolumeRef = useRef(audioVolume);
   const lastMouthOpenTimeRef = useRef(0);
+  const detectorRef = useRef(null);
 
   // landmarks 최신 값 유지
   // - 배열이면 state 기반으로 업데이트
@@ -46,12 +47,14 @@ export function useSpeakingTimer(isRecording, landmarks, audioVolume) {
         clearInterval(timerIdRef.current);
         timerIdRef.current = null;
       }
+      detectorRef.current = null;
       setCurrentlySpeaking(false);
       return;
     }
 
     // 녹음 시작 시 초기화
     lastTickTimeRef.current = Date.now();
+    detectorRef.current = createSpeakingDetector();
 
     // 타이머 시작
     timerIdRef.current = setInterval(() => {
@@ -68,7 +71,8 @@ export function useSpeakingTimer(isRecording, landmarks, audioVolume) {
           ? landmarksInputRef.current.current
           : landmarksRef.current;
 
-      const state = getSpeakingState(currentLandmarks, audioVolumeRef.current);
+      const state = detectorRef.current?.getSpeakingState(currentLandmarks, audioVolumeRef.current) ||
+        { isSpeaking: false, mouthOpen: false, hasAudio: false };
       
       // 입이 열려있으면 타임스탬프 갱신
       if (state.mouthOpen) {

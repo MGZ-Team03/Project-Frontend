@@ -9,10 +9,19 @@ import {
   selectWhisperProgress,
 } from '../../store/slices/whisperPreloadSlice';
 
-export default function StudentLayout({ children, todayTime = 0 }) {
+export default function StudentLayout({ 
+  children, 
+  todayTime = 0, 
+  onTutorSearchClick, 
+  onNotificationClick, 
+  unreadNotificationCount = 0 
+}) {
   const { preloadGlobal } = useWhisperGlobalPreload();
   const whisperStatus = useSelector(selectWhisperPreloadStatus);
   const whisperProgress = useSelector(selectWhisperProgress);
+  const dailyRecordingMs = useSelector((state) => state.speakingStats?.dailyStats?.totalRecordingTime || 0);
+  const sessionRecordingMs = useSelector((state) => state.speakingStats?.currentSession?.totalRecordingTime || 0);
+  const todayTimeSec = Math.floor((dailyRecordingMs + sessionRecordingMs) / 1000);
 
   // 마운트 시 1회 preload (이미 ready면 스킵)
   useEffect(() => {
@@ -21,7 +30,12 @@ export default function StudentLayout({ children, todayTime = 0 }) {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: '#f5f5f5' }}>
-      <Header todayTime={todayTime} />
+      <Header 
+        todayTime={todayTimeSec} 
+        onTutorSearchClick={onTutorSearchClick}
+        onNotificationClick={onNotificationClick}
+        unreadNotificationCount={unreadNotificationCount}
+      />
 
       {/* Whisper 로딩 배너 - loading 상태일 때만 표시 */}
       {whisperStatus === 'loading' && (
