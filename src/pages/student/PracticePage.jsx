@@ -71,6 +71,7 @@ import {
   getNetSpeakingDensityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
 import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 
 // Prevent duplicate calls (StrictMode mount/unmount) + add simple cache
 const sentenceBatchInFlight = new Map(); // key -> Promise<{sessionId:string|null, sentences:string[]}>
@@ -80,34 +81,6 @@ const AUDIO_POLL_SCHEDULE_MS = [0, 500, 1000, 2000, 3000, 5000];
 
 export default function PracticePage() {
   const user = useSelector(state => state.auth.user);
-
-  const getData = useCallback(() => {
-    console.log("PracticePage: sentence room 상태 전송");
-
-    if(!user?.email) {
-      console.log("❌ 사용자 정보 없음");
-      return null;
-    }
-
-    return {
-      action: "status",
-      data:{
-        tutorEmail: user.tutorEmail,
-        studentEmail: user.email,
-        status: "active",
-        room: "sentence",
-        assignedAt: new Date().toISOString().split("T")[0],
-      }
-    };
-  }, [user?.email]); // ← tutorEmail도 추가!
-
-  // 페이지 진입 시 즉시 전송 + 5초마다 전송
-  const socket = useWebSocket(getData, {
-    sendImmediately: true,   // 즉시 전송 활성화
-    enableInterval: true,     // 주기 전송 활성화
-    interval: 5000            // 5초 간격
-  });
-
   const location = useLocation();
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -144,6 +117,8 @@ export default function PracticePage() {
   const [sentenceError, setSentenceError] = useState(null);
   const [practiceSessionId, setPracticeSessionId] = useState(null);
   const lastLoadKeyRef = useRef(null);
+
+  useStudentStatus(user, location);
 
   // Hooks
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(

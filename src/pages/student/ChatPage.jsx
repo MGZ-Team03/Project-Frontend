@@ -1,4 +1,4 @@
-import {useState, useRef, useEffect, useCallback} from 'react';
+import {useState, useRef, useEffect} from 'react';
 import { useLocation, useNavigate} from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
@@ -85,7 +85,7 @@ import {
   getNetSpeakingDensityFeedback,
   getResponseQualityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
- 
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 // server-backed chat + TTS
 
 export default function ChatPage() {
@@ -151,6 +151,10 @@ export default function ChatPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sttError, setSttError] = useState(null);
 
+
+
+  useStudentStatus(user, location);
+
   // Hooks - MediaPipe
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
     videoRef,
@@ -163,30 +167,6 @@ export default function ChatPage() {
     transcribe: whisperTranscribe,
     error: whisperError,
   } = useWhisperSTT();
-
-  const getData = useCallback(() => {
-    if(!user?.email) return null;
-
-    return {
-      action: "status",
-      data: {
-        tutorEmail: user.tutorEmail,
-        studentEmail: user.email,
-        status: "active",
-        room: "ai",  // 대화는 "ai"
-        assignedAt: new Date().toISOString().split("T")[0],
-      }
-    };
-  }, [user?.email, user?.tutorEmail]);
-
-
-  // 페이지 진입 시 즉시 전송 + 5초마다 전송
-  const socket = useWebSocket(getData, {
-    sendImmediately: true,
-    enableInterval: true,
-    interval: 5000
-  });
-
 
   // Redux에서 전역 Whisper 상태 가져오기
   const whisperStatus = useSelector(selectWhisperPreloadStatus);

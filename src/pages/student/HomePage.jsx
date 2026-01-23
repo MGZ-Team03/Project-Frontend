@@ -1,5 +1,5 @@
-import { useNavigate } from 'react-router-dom';
-import {useCallback, useState, useEffect} from 'react';
+import {useLocation, useNavigate} from 'react-router-dom';
+import {useCallback, useEffect, useState} from 'react';
 import { useSelector } from 'react-redux';
 import {
   Box,
@@ -31,6 +31,7 @@ import TutorSearchDialog from '../../components/student/TutorSearchDialog';
 import { scenarios } from '../../data/conversation/scenarios';
 import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 import { getNotifications } from '../../api/notifications';
 
 export default function HomePage() {
@@ -41,6 +42,9 @@ export default function HomePage() {
   const [practiceTopicId, setPracticeTopicId] = useState('small_talk');
   const [chatDifficulty, setChatDifficulty] = useState('중');
   const [chatScenario, setChatScenario] = useState('small_talk');
+  const location = useLocation().pathname.split('/')[1];
+
+  useStudentStatus(user, location);
   const [tutorSearchOpen, setTutorSearchOpen] = useState(false);
   
   // 알림 관련 state

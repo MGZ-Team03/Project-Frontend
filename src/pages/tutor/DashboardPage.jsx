@@ -52,7 +52,7 @@ function getStatusColor(status) {
 
 function getStatusLabel(status) {
   switch (status) {
-    case 'speaking': return '발음 중';
+    case 'speaking': return '학습 중';
     case 'listening': return '듣기만';
     case 'idle': return '미활동';         // 빨강 (개입 필요)
     case 'inactive': return '오프라인';   // 회색
@@ -204,6 +204,38 @@ export default function DashboardPage() {
   const [notification, setNotification] = useState(null);
   const [sending, setSending] = useState(false);
 
+  const [summary, setSummary] = useState({ total: 0, active: 0, speaking: 0, warning: 0 });
+  const [wsStatus, setWsStatus] = useState('connecting');
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const user = useSelector(state => state.auth.user);
+  //
+  // console.log("user auth : " + JSON.stringify(user));
+  useEffect(() => {
+    //
+    // console.log('🔌 WebSocket 연결 시도:', WS_URL);
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      // console.log('✅ WebSocket 연결 성공');
+      setWsStatus('connected');
+
+      const authMessage = {
+        action: "dashboard",
+        name: user.name,
+        tutorEmail: user.email,
+      };
+      if(user.role === "tutor"){
+        // console.log("auth:",authMessage)
+        // console.log('📤 인증 메시지 전송:', authMessage);
+        ws.send(JSON.stringify(authMessage));
+        setWsStatus('connected');
+      }
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        // console.log('📊 대시보드 업데이트 수신:', message);
   // 알림 관리
   const [notifications, setNotifications] = useState([]);
   const [notificationDialog, setNotificationDialog] = useState(false);
@@ -239,6 +271,27 @@ export default function DashboardPage() {
     }
   };
 
+          // console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
+        }
+
+      } catch (error) {
+        // console.error('❌ 메시지 파싱 에러:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      // console.error('❌ WebSocket 에러:', error);
+      setWsStatus('disconnected');
+    };
+
+    ws.onclose = () => {
+      // console.log('🔌 WebSocket 연결 종료');
+      setWsStatus('disconnected');
+    };
+
+    return () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
   // 알림 목록 불러오기 (notifications API 사용)
   const loadNotifications = async () => {
     try {
@@ -395,7 +448,7 @@ export default function DashboardPage() {
                   {speakingStudents.length}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  학습 중
+                  발음 중
                 </Typography>
               </CardContent>
             </Card>
