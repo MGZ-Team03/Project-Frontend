@@ -263,7 +263,7 @@ export default function DashboardPage() {
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        console.log('📊 대시보드 업데이트 수신:', message);
+        console.log('📊 대시보드 업데이트 수신!:', message);
 
         if (message.type === 'dashboard_update') {
           setStudents(message.students || []);
