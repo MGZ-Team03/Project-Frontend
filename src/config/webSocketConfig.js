@@ -1,5 +1,7 @@
 import {WS_URL} from "../utils/constants.js";
-import store from "../store/index.js";
+
+// 순환 참조 방지: store를 외부에서 주입
+let _store = null;
 
 class WebSocketSingleton {
     constructor() {
@@ -7,6 +9,11 @@ class WebSocketSingleton {
         this.intervalId = null;
         this.messageListeners = new Set();  // 메시지 리스너 집합
         this.connectedUserEmail = null;  // 연결된 사용자 이메일 추적
+    }
+
+    // store 주입 메서드
+    setStore(store) {
+        _store = store;
     }
 
     // 메시지 리스너 등록
@@ -30,8 +37,8 @@ class WebSocketSingleton {
         } catch (_) {}
         
         // Redux에서 사용자 이메일 가져오기
-        const state = store.getState();
-        const userEmail = state.auth?.user?.email;
+        const state = _store?.getState();
+        const userEmail = state?.auth?.user?.email;
         
         // 같은 사용자로 이미 연결되어 있으면 재사용
         if (this.socket && 

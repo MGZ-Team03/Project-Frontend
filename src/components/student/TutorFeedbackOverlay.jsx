@@ -23,7 +23,7 @@ import {
   OpenInFull,
   VolumeOff,
 } from '@mui/icons-material';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import ws from '../../config/webSocketConfig';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 
 /**
@@ -112,12 +112,37 @@ export default function TutorFeedbackOverlay() {
     }
   };
 
-  // WebSocket 연결
-  const { isConnected, error: wsError } = useWebSocket(
-    user?.email,
-    null, // tutorEmail (학생은 null)
-    handleWebSocketMessage
-  );
+  // WebSocket 연결 상태
+  const [isConnected, setIsConnected] = useState(false);
+  const [wsError, setWsError] = useState(null);
+
+  // 싱글톤 WebSocket 리스너 등록
+  useEffect(() => {
+    if (!user?.email) return;
+
+    // WebSocket 연결
+    const socket = ws.connect();
+    
+    // 연결 상태 업데이트
+    const updateConnectionState = () => {
+      setIsConnected(socket?.readyState === WebSocket.OPEN);
+    };
+    
+    updateConnectionState();
+    
+    if (socket) {
+      socket.addEventListener('open', () => setIsConnected(true));
+      socket.addEventListener('close', () => setIsConnected(false));
+      socket.addEventListener('error', () => setWsError('WebSocket 연결 실패'));
+    }
+
+    // 메시지 리스너 등록
+    const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
+
+    return () => {
+      unsubscribe();
+    };
+  }, [user?.email]);
 
   // 브라우저 알림 권한 요청
   useEffect(() => {

@@ -49,15 +49,20 @@ export default function HomePage() {
 
   const studentEmail = user?.email;
 
-  // 알림 개수 조회
+  // 알림 개수 조회 (TUTOR_REQUEST_APPROVED, TUTOR_REQUEST_REJECTED 타입만)
   const loadUnreadCount = async () => {
     if (!studentEmail) return;
     try {
       const response = await getNotifications(false);
-      // API 응답 구조: { success: true, data: { notifications: [...], unreadCount: n } }
-      // 또는: { notifications: [...], unreadCount: n }
-      const unread = response.data?.unreadCount || response.unreadCount || 0;
-      setUnreadCount(unread);
+      // API 응답 구조에서 알림 목록 추출
+      const allNotifications = response.data?.notifications || response.notifications || [];
+      
+      // TUTOR_REQUEST_APPROVED, TUTOR_REQUEST_REJECTED 타입만 필터링하여 개수 계산
+      const tutorNotificationCount = allNotifications.filter(
+        n => n.type === 'TUTOR_REQUEST_APPROVED' || n.type === 'TUTOR_REQUEST_REJECTED'
+      ).length;
+      
+      setUnreadCount(tutorNotificationCount);
     } catch (err) {
       console.error('알림 개수 조회 실패:', err);
     }
@@ -72,8 +77,11 @@ export default function HomePage() {
 
   // 메시지 핸들러 함수 (WebSocket 메시지 수신 시 호출)
   const handleWebSocketMessage = useCallback((data) => {
+    console.log('📩 [HomePage] WebSocket 메시지 수신:', data);
+    
     // 승인 알림
     if (data.type === 'TUTOR_REQUEST_APPROVED') {
+      console.log('✅ [HomePage] 승인 알림 처리');
       setUnreadCount(prev => prev + 1);  // 즉시 카운트 증가
       setSnackbar({
         open: true,
@@ -84,6 +92,7 @@ export default function HomePage() {
     
     // 거부 알림
     if (data.type === 'TUTOR_REQUEST_REJECTED') {
+      console.log('❌ [HomePage] 거부 알림 처리');
       setUnreadCount(prev => prev + 1);  // 즉시 카운트 증가
       const reason = data.data.rejection_reason || '사유 없음';
       setSnackbar({
