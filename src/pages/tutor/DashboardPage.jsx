@@ -215,15 +215,15 @@ export default function DashboardPage() {
   const [wsStatus, setWsStatus] = useState('connecting');
   const [lastUpdate, setLastUpdate] = useState(null);
   const user = useSelector(state => state.auth.user);
-
-  console.log("user auth : " + JSON.stringify(user));
+  //
+  // console.log("user auth : " + JSON.stringify(user));
   useEffect(() => {
-
-    console.log('🔌 WebSocket 연결 시도:', WS_URL);
+    //
+    // console.log('🔌 WebSocket 연결 시도:', WS_URL);
     const ws = new WebSocket(WS_URL);
 
     ws.onopen = () => {
-      console.log('✅ WebSocket 연결 성공');
+      // console.log('✅ WebSocket 연결 성공');
       setWsStatus('connected');
 
       const authMessage = {
@@ -232,8 +232,8 @@ export default function DashboardPage() {
         tutorEmail: user.email,
       };
       if(user.role === "tutor"){
-        console.log("auth:",authMessage)
-        console.log('📤 인증 메시지 전송:', authMessage);
+        // console.log("auth:",authMessage)
+        // console.log('📤 인증 메시지 전송:', authMessage);
         ws.send(JSON.stringify(authMessage));
         setWsStatus('connected');
       }
@@ -242,28 +242,28 @@ export default function DashboardPage() {
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        console.log('📊 대시보드 업데이트 수신:', message);
+        // console.log('📊 대시보드 업데이트 수신:', message);
 
         if (message.type === 'dashboard_update') {
           setStudents(message.students || []);
           setSummary(message.summary || { total: 0, active: 0, speaking: 0, warning: 0 });
           setLastUpdate(new Date(message.timestamp));
 
-          console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
+          // console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
         }
 
       } catch (error) {
-        console.error('❌ 메시지 파싱 에러:', error);
+        // console.error('❌ 메시지 파싱 에러:', error);
       }
     };
 
     ws.onerror = (error) => {
-      console.error('❌ WebSocket 에러:', error);
+      // console.error('❌ WebSocket 에러:', error);
       setWsStatus('disconnected');
     };
 
     ws.onclose = () => {
-      console.log('🔌 WebSocket 연결 종료');
+      // console.log('🔌 WebSocket 연결 종료');
       setWsStatus('disconnected');
     };
 

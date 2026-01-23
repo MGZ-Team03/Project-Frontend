@@ -17,21 +17,15 @@ export default function useWebSocket(getData, options={}) {
     }, [getData]);
 
     useEffect(() => {
-        console.log("🔌 WebSocket 마운트");
 
         const socket = ws.connect();
 
         const handleOpen = () => {
-            console.log("✅ WebSocket 열림");
-
             // 즉시 전송 옵션이 켜져있을 때만 전송
             if (sendImmediately) {
                 const data = getDataRef.current();
                 if (data) {
                     socket.send(JSON.stringify(data));
-                    console.log("📤 초기 전송:", data);
-                } else {
-                    console.log("⏭️ 초기 전송 생략 (getData가 null 반환)");
                 }
             }
 
@@ -50,7 +44,6 @@ export default function useWebSocket(getData, options={}) {
         }
 
        return () => {
-            console.log("👋 WebSocket cleanup");
             socket.removeEventListener('open', handleOpen);
             if (enableInterval) {
                 ws.stopSendingData();
