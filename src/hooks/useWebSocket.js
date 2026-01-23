@@ -3,7 +3,7 @@ import { WS_URL } from '../utils/constants';
 
 /**
  * WebSocket 연결 관리 커스텀 훅
- * 
+ *
  * @param {string} userEmail - 사용자 이메일
  * @param {string} tutorEmail - 튜터 이메일 (학생인 경우)
  * @param {function} onMessage - 메시지 수신 콜백
@@ -25,7 +25,7 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
         wsUrl += `&tutor_email=${encodeURIComponent(tutorEmail)}`;
       }
       console.log('🔌 WebSocket 연결 시도:', wsUrl);
-      
+
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
@@ -38,7 +38,7 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
         try {
           const data = JSON.parse(event.data);
           console.log('📩 WebSocket 메시지 수신:', data);
-          
+
           if (onMessage) {
             onMessage(data);
           }

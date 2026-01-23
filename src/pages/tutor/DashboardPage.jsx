@@ -62,7 +62,7 @@ function getStatusColor(status) {
 
 function getStatusLabel(status) {
   switch (status) {
-    case 'speaking': return '발음 중';
+    case 'speaking': return '학습 중';
     case 'listening': return '듣기만';
     case 'idle': return '미활동';         // 빨강 (개입 필요)
     case 'inactive': return '오프라인';   // 회색
@@ -371,7 +371,7 @@ export default function DashboardPage() {
                   {speakingStudents.length}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  학습 중
+                  발음 중
                 </Typography>
               </CardContent>
             </Card>

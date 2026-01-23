@@ -1,5 +1,7 @@
 import axios from './axios';
 import ws from "../config/webSocketConfig.js";
+import {sendStudentStatus} from "./useStudentStatus.js";
+
 
 // 회원가입
 export const register = async (email, password, name, role = 'student') => {
@@ -40,8 +42,21 @@ export const login = async (email, password) => {
   return user;
 };
 
-// 로그아웃
-export const logout = () => {
+//
+//로그아웃
+export const logout = async () => {
+  const userStr = localStorage.getItem('user');
+  const user = userStr ? JSON.parse(userStr) : null;
+
+  // inactive 상태 전송
+  if (user?.email) {
+    try {
+      await sendStudentStatus(user.email, user.tutorEmail, "/logout");
+    } catch (error) {
+      console.error('로그아웃 상태 전송 실패:', error);
+    }
+  }
+
   ws.disconnect();
   localStorage.removeItem('idToken');
   localStorage.removeItem('accessToken');
