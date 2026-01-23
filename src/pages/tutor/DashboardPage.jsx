@@ -33,6 +33,86 @@ import {
   Send,
 } from '@mui/icons-material';
 import TutorLayout from '../../components/common/TutorLayout';
+import {WS_URL} from "../../utils/constants.js";
+
+// 목업 학생 데이터
+const MOCK_STUDENTS = [
+  {
+    email: 'park@student.com',
+    name: '박영어',
+    activity: 'sentence',
+    status: 'speaking',
+    speakingRatio: 85,
+    duration: 12,
+    currentSentence: 'How are you doing today?',
+  },
+  {
+    email: 'kim@student.com',
+    name: '김스피킹',
+    activity: 'ai_chat',
+    status: 'speaking',
+    speakingRatio: 78,
+    duration: 23,
+    currentTopic: '카페 주문',
+  },
+  {
+    email: 'choi@student.com',
+    name: '최토익',
+    activity: 'sentence',
+    status: 'listening',
+    speakingRatio: 30,
+    duration: 8,
+    currentSentence: 'The weather is nice today.',
+    warning: true,
+  },
+  {
+    email: 'jung@student.com',
+    name: '정회화',
+    activity: null,
+    status: 'inactive',
+    speakingRatio: 0,
+    duration: 0,
+    lastActive: '5분 전',
+    alert: true,
+  },
+  {
+    email: 'lee@student.com',
+    name: '이잉글',
+    activity: 'ai_chat',
+    status: 'speaking',
+    speakingRatio: 72,
+    duration: 15,
+    currentTopic: '길 묻기',
+  },
+  {
+    email: 'han@student.com',
+    name: '한영희',
+    activity: 'sentence',
+    status: 'speaking',
+    speakingRatio: 80,
+    duration: 18,
+    currentSentence: 'I would like a cup of coffee.',
+  },
+  {
+    email: 'song@student.com',
+    name: '송민수',
+    activity: 'ai_chat',
+    status: 'listening',
+    speakingRatio: 45,
+    duration: 10,
+    currentTopic: '자기소개',
+    warning: true,
+  },
+  {
+    email: 'yoon@student.com',
+    name: '윤지민',
+    activity: 'sentence',
+    status: 'speaking',
+    speakingRatio: 90,
+    duration: 30,
+    currentSentence: 'Where is the nearest subway station?',
+  },
+];
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
 import NotificationDialog from '../../components/tutor/NotificationDialog';
@@ -359,10 +439,62 @@ export default function DashboardPage() {
   const speakingStudents = students.filter(s => s.status === 'speaking');
   const warningStudents = students.filter(s => s.warning || s.alert);
 
+  // const [students, setStudents] = useState([]);
+  const [summary, setSummary] = useState({ total: 0, active: 0, speaking: 0, warning: 0 });
+  const [wsStatus, setWsStatus] = useState('connecting');
+  const [lastUpdate, setLastUpdate] = useState(null);
+
 
   const handleStudentClick = (email) => {
     navigate(`/tutor/students/${email}`);
   };
+
+  useEffect(() => {
+
+    console.log('🔌 WebSocket 연결 시도:', WS_URL);
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      console.log('✅ WebSocket 연결 성공');
+      setWsStatus('connected');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.log('📊 대시보드 업데이트 수신!:', message);
+
+        if (message.type === 'dashboard_update') {
+          setStudents(message.students || []);
+          setSummary(message.summary || { total: 0, active: 0, speaking: 0, warning: 0 });
+          setLastUpdate(new Date(message.timestamp));
+
+          console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
+        }
+
+      } catch (error) {
+        console.error('❌ 메시지 파싱 에러:', error);
+      }
+
+      ws.onerror = (error) => {
+        console.error('❌ WebSocket 에러:', error);
+        setWsStatus('disconnected');
+      };
+
+      ws.onclose = () => {
+        console.log('🔌 WebSocket 연결 종료');
+        setWsStatus('disconnected');
+      };
+
+      return () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      };
+    };
+
+
+  },[]);
 
   // 피드백 다이얼로그 열기
   const openFeedbackDialog = (student, event) => {
