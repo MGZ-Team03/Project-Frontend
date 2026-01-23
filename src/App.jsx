@@ -109,7 +109,10 @@ function AppContent() {
 function App() {
   return (
     <Provider store={store}>
-      <BrowserRouter>
+      <BrowserRouter future={{ 
+        v7_relativeSplatPath: true,
+        v7_startTransition: true 
+      }}>
         <AppContent />
       </BrowserRouter>
     </Provider>
