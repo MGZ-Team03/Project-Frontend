@@ -21,14 +21,11 @@ env.allowRemoteModels = true;
 env.remoteHost = 'https://huggingface.co/';
 // IMPORTANT: disable local model loading (Vite SPA fallback can return index.html -> JSON parse error)
 env.allowLocalModels = false;
-env.logLevel = 'error'; // transformers.js 로그 숨기기
 // Ensure onnxruntime-web WASM files can be resolved in Vite/Worker env
 // (This project uses onnxruntime-web via @xenova/transformers)
 env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
 // Avoid SharedArrayBuffer/COOP issues by keeping single-threaded by default
 env.backends.onnx.wasm.numThreads = 1;
-// ONNX Runtime 경고 메시지 숨기기
-env.backends.onnx.logLevel = 'error';
 
 // Cache pipelines per (modelId, quantized). Keep this SMALL to avoid memory blow-ups in browser.
 // We intentionally evict old pipelines when loading a new one.
