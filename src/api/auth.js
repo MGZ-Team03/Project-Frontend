@@ -152,3 +152,39 @@ export const getCurrentUser = async () => {
     return null;
   }
 };
+
+// 프로필 업데이트
+export const updateProfile = async (profileData) => {
+  const response = await axios.put('/api/auth/profile', profileData);
+  
+  // 로컬 스토리지 업데이트
+  const currentUser = JSON.parse(localStorage.getItem('user'));
+  const updatedUser = { ...currentUser, ...response.data };
+  localStorage.setItem('user', JSON.stringify(updatedUser));
+  
+  return response.data;
+};
+
+// 프로필 이미지 업로드 URL 요청
+export const getProfileImageUploadUrl = async () => {
+  const response = await axios.post('/api/auth/profile/image');
+  return response.data; // { uploadUrl, imageUrl }
+};
+
+// S3에 이미지 업로드
+export const uploadProfileImage = async (file) => {
+  // 1. Presigned URL 요청
+  const { uploadUrl, imageUrl } = await getProfileImageUploadUrl();
+  
+  // 2. S3에 직접 업로드
+  await fetch(uploadUrl, {
+    method: 'PUT',
+    body: file,
+    headers: { 'Content-Type': 'image/jpeg' },
+  });
+  
+  // 3. 프로필에 이미지 URL 저장
+  await updateProfile({ profileImage: imageUrl });
+  
+  return imageUrl;
+};

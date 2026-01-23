@@ -10,7 +10,7 @@ import {
   IconButton,
   Badge,
 } from '@mui/material';
-import { Logout, School, Person, PersonAdd, Notifications } from '@mui/icons-material';
+import { Logout, School, Person, PersonAdd, Notifications, AccountCircle } from '@mui/icons-material';
 
 export default function Header({ 
   todayTime = 0, 
@@ -102,6 +102,17 @@ export default function Header({
           color={isStudent ? 'info' : isTutor ? 'secondary' : 'default'}
           sx={{ mr: 2 }}
         />
+        
+        {/* 프로필 버튼 */}
+        <IconButton
+          onClick={() => navigate('/profile')}
+          sx={{ mr: 1 }}
+          color="primary"
+          title="프로필 설정"
+        >
+          <AccountCircle />
+        </IconButton>
+        
         <Typography variant="body2" sx={{ mr: 2 }}>
           {user?.name || user?.email}
         </Typography>

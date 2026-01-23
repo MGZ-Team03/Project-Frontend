@@ -16,6 +16,7 @@ import HomePage from './pages/student/HomePage';
 import PracticePage from './pages/student/PracticePage';
 import ChatPage from './pages/student/ChatPage';
 import StatsPage from './pages/student/StatsPage';
+import ProfilePage from './pages/student/ProfilePage';
 
 // Pages - Tutor
 import DashboardPage from './pages/tutor/DashboardPage';
@@ -73,6 +74,11 @@ function AppContent() {
       <Route path="/introduce" element={
         <ProtectedRoute allowedRoles={['student']}>
           <LandingPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/profile" element={
+        <ProtectedRoute allowedRoles={['student', 'tutor']}>
+          <ProfilePage />
         </ProtectedRoute>
       } />
 
