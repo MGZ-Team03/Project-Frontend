@@ -35,83 +35,83 @@ import TutorLayout from '../../components/common/TutorLayout';
 import {WS_URL} from "../../utils/constants.js";
 
 // 목업 학생 데이터
-const MOCK_STUDENTS = [
-  {
-    email: 'park@student.com',
-    name: '박영어',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 85,
-    duration: 12,
-    currentSentence: 'How are you doing today?',
-  },
-  {
-    email: 'kim@student.com',
-    name: '김스피킹',
-    activity: 'ai_chat',
-    status: 'speaking',
-    speakingRatio: 78,
-    duration: 23,
-    currentTopic: '카페 주문',
-  },
-  {
-    email: 'choi@student.com',
-    name: '최토익',
-    activity: 'sentence',
-    status: 'listening',
-    speakingRatio: 30,
-    duration: 8,
-    currentSentence: 'The weather is nice today.',
-    warning: true,
-  },
-  {
-    email: 'jung@student.com',
-    name: '정회화',
-    activity: null,
-    status: 'inactive',
-    speakingRatio: 0,
-    duration: 0,
-    lastActive: '5분 전',
-    alert: true,
-  },
-  {
-    email: 'lee@student.com',
-    name: '이잉글',
-    activity: 'ai_chat',
-    status: 'speaking',
-    speakingRatio: 72,
-    duration: 15,
-    currentTopic: '길 묻기',
-  },
-  {
-    email: 'han@student.com',
-    name: '한영희',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 80,
-    duration: 18,
-    currentSentence: 'I would like a cup of coffee.',
-  },
-  {
-    email: 'song@student.com',
-    name: '송민수',
-    activity: 'ai_chat',
-    status: 'listening',
-    speakingRatio: 45,
-    duration: 10,
-    currentTopic: '자기소개',
-    warning: true,
-  },
-  {
-    email: 'yoon@student.com',
-    name: '윤지민',
-    activity: 'sentence',
-    status: 'speaking',
-    speakingRatio: 90,
-    duration: 30,
-    currentSentence: 'Where is the nearest subway station?',
-  },
-];
+// const MOCK_STUDENTS = [
+//   {
+//     email: 'park@student.com',
+//     name: '박영어',
+//     activity: 'sentence',
+//     status: 'speaking',
+//     speakingRatio: 85,
+//     duration: 12,
+//     currentSentence: 'How are you doing today?',
+//   },
+//   {
+//     email: 'kim@student.com',
+//     name: '김스피킹',
+//     activity: 'ai_chat',
+//     status: 'speaking',
+//     speakingRatio: 78,
+//     duration: 23,
+//     currentTopic: '카페 주문',
+//   },
+//   {
+//     email: 'choi@student.com',
+//     name: '최토익',
+//     activity: 'sentence',
+//     status: 'listening',
+//     speakingRatio: 30,
+//     duration: 8,
+//     currentSentence: 'The weather is nice today.',
+//     warning: true,
+//   },
+//   {
+//     email: 'jung@student.com',
+//     name: '정회화',
+//     activity: null,
+//     status: 'inactive',
+//     speakingRatio: 0,
+//     duration: 0,
+//     lastActive: '5분 전',
+//     alert: true,
+//   },
+//   {
+//     email: 'lee@student.com',
+//     name: '이잉글',
+//     activity: 'ai_chat',
+//     status: 'speaking',
+//     speakingRatio: 72,
+//     duration: 15,
+//     currentTopic: '길 묻기',
+//   },
+//   {
+//     email: 'han@student.com',
+//     name: '한영희',
+//     activity: 'sentence',
+//     status: 'speaking',
+//     speakingRatio: 80,
+//     duration: 18,
+//     currentSentence: 'I would like a cup of coffee.',
+//   },
+//   {
+//     email: 'song@student.com',
+//     name: '송민수',
+//     activity: 'ai_chat',
+//     status: 'listening',
+//     speakingRatio: 45,
+//     duration: 10,
+//     currentTopic: '자기소개',
+//     warning: true,
+//   },
+//   {
+//     email: 'yoon@student.com',
+//     name: '윤지민',
+//     activity: 'sentence',
+//     status: 'speaking',
+//     speakingRatio: 90,
+//     duration: 30,
+//     currentSentence: 'Where is the nearest subway station?',
+//   },
+// ];
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
 import { sendFeedback } from '../../api/tutorFeedback';
@@ -202,7 +202,7 @@ function StudentCard({ student, onClick, onFeedbackClick, tutorEmail, disabled, 
                 {student.activity && (
                     <Chip
                         icon={student.activity === 'sentence' ? <MenuBook sx={{ fontSize: 14 }} /> : <Chat sx={{ fontSize: 14 }} />}
-                        label={student.activity === 'sentence' ? '문장연습' : 'AI대화'}
+                        label={student.activity === 'sentence' ? '문장연습' : student.activity === 'ai' ? "ai" : "no room"}
                         size="small"
                         variant="outlined"
                     />

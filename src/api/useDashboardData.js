@@ -10,7 +10,7 @@ export const getDashboard = async (tutorEmail) =>{
         }
         const fetchData = async () => {
             try {
-                const {data} = await axios.get(`https://ovcmaro4u8.execute-api.ap-northeast-2.amazonaws.com/Dev/api/dashboard?tutorEmail=${tutorEmail}`);
+                const {data} = await axios.get(`/api/dashboard?tutorEmail=${tutorEmail}`);
                 console.log("getDashboard: ", data);
                 return data;
             } catch (error) {

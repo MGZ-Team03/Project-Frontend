@@ -34,7 +34,7 @@ export default function HomePage() {
     } catch (_) {}
   }, []);
 
-  useStudentStatus(user, location);
+  // useStudentStatus(user, location);
   const [tutorSearchOpen, setTutorSearchOpen] = useState(false);
   
   // 알림 관련 state

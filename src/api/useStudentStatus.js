@@ -21,7 +21,7 @@ export const sendStudentStatus = async (userEmail, tutorEmail, page) => {
     console.log(payload);
 
     try {
-        const {data} = await axios.post("https://ovcmaro4u8.execute-api.ap-northeast-2.amazonaws.com/Dev/api/student-status", payload);
+        const {data} = await axios.post("/api/student-status", payload);
         return data;
     } catch (error) {
         throw error;

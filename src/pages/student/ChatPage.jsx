@@ -188,7 +188,7 @@ export default function ChatPage() {
   const [sttError, setSttError] = useState(null);
 
 
-  useStudentStatus(user, location);
+  // useStudentStatus(user, location);
 
   // Hooks - MediaPipe
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
