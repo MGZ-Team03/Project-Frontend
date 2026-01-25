@@ -55,25 +55,33 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
   const handleApprove = async (requestId) => {
     try {
       setProcessing(requestId);
+      console.log('✅ 승인 처리 시작:', requestId);
       await processTutorRequest(requestId, 'approve');
-      
+
       // 알림 읽음 처리 (notification_id_timestamp 사용)
       const notification = notifications.find(n => n.data?.request_id === requestId);
+      console.log('📢 찾은 알림:', notification);
+      console.log('📢 notification_id_timestamp:', notification?.notification_id_timestamp);
+
       if (notification?.notification_id_timestamp) {
         try {
+          console.log('📖 알림 읽음 처리 시도:', notification.notification_id_timestamp);
           await markNotificationAsRead(notification.notification_id_timestamp);
+          console.log('✅ 알림 읽음 처리 완료');
         } catch (readErr) {
-          console.error('알림 읽음 처리 실패:', readErr);
+          console.error('❌ 알림 읽음 처리 실패:', readErr);
         }
+      } else {
+        console.warn('⚠️ notification_id_timestamp가 없습니다. 알림 구조:', notification);
       }
-      
+
       // 알림 목록 갱신
       if (onUpdate) {
         await onUpdate();
       }
     } catch (err) {
       setError('승인 처리 중 오류가 발생했습니다.');
-      console.error('Approve error:', err);
+      console.error('❌ Approve error:', err);
     } finally {
       setProcessing(null);
     }
@@ -92,30 +100,38 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
   // 실제 거부 처리
   const handleReject = async () => {
     const { requestId } = confirmDialog;
-    
+
     try {
       setProcessing(requestId);
       setConfirmDialog({ open: false, requestId: null, studentName: '', studentEmail: '' });
-      
+
+      console.log('❌ 거부 처리 시작:', requestId);
       await processTutorRequest(requestId, 'reject', '현재 학생을 받을 수 없습니다.');
-      
+
       // 알림 읽음 처리 (notification_id_timestamp 사용)
       const notification = notifications.find(n => n.data?.request_id === requestId);
+      console.log('📢 찾은 알림:', notification);
+      console.log('📢 notification_id_timestamp:', notification?.notification_id_timestamp);
+
       if (notification?.notification_id_timestamp) {
         try {
+          console.log('📖 알림 읽음 처리 시도:', notification.notification_id_timestamp);
           await markNotificationAsRead(notification.notification_id_timestamp);
+          console.log('✅ 알림 읽음 처리 완료');
         } catch (readErr) {
-          console.error('알림 읽음 처리 실패:', readErr);
+          console.error('❌ 알림 읽음 처리 실패:', readErr);
         }
+      } else {
+        console.warn('⚠️ notification_id_timestamp가 없습니다. 알림 구조:', notification);
       }
-      
+
       // 알림 목록 갱신
       if (onUpdate) {
         await onUpdate();
       }
     } catch (err) {
       setError('거부 처리 중 오류가 발생했습니다.');
-      console.error('Reject error:', err);
+      console.error('❌ Reject error:', err);
     } finally {
       setProcessing(null);
     }

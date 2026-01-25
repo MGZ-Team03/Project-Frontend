@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { getDailyStats } from '../../api/stats';
+import { mapBackendToReduxStats } from '../../utils/statsSync';
 import { getStorageKey, migrateOldStatsKey } from '../../utils/storageKeys';
-
-const STORAGE_KEY = 'speaktracker_daily_stats';
 
 // 오늘 날짜 키 생성
 function getTodayKey() {
@@ -39,15 +39,18 @@ const initialDailyStats = {
   totalSpeakingTime: 0,  // 일별 총 발화 시간 (ms)
   sessionsCount: 0,
   practiceCount: 0,
+  chatTurnsCount: 0,     // AI 대화 턴 수
 
   // 4대 지표 (일별 평균)
   avgPaceRatio: 0,
   avgNetSpeakingDensity: 0,
   avgResponseQuality: 0,
+  avgResponseLatency: 0, // AI 응답 평균 지연 시간 (ms)
 
   // 상세 기록 (분석용)
   paceRatios: [],
   responseQualities: [],
+  responseLatencies: [], // AI 응답 지연 시간 배열 (ms)
 };
 
 const initialState = {
@@ -58,7 +61,7 @@ const initialState = {
   error: null,
 };
 
-// localStorage에서 일별 통계 로드
+// localStorage에서 일일 통계 로드 (백엔드 fallback)
 export const loadStatsFromStorage = createAsyncThunk(
   'speakingStats/loadFromStorage',
   async ({ userEmail }, { rejectWithValue }) => {
@@ -66,48 +69,76 @@ export const loadStatsFromStorage = createAsyncThunk(
       return rejectWithValue('No user email provided');
     }
 
+    migrateOldStatsKey(userEmail);
+    const storageKey = getStorageKey(userEmail);
     const todayKey = getTodayKey();
 
-    // Migrate old static key to user-specific key (one-time migration)
-    migrateOldStatsKey(userEmail);
-
-    // Use user-specific storage key
-    const storageKey = getStorageKey(userEmail);
+    // 1. localStorage 먼저 확인
     const stored = localStorage.getItem(storageKey);
-
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
+        // 날짜가 오늘과 일치하는지 확인
         if (parsed.date === todayKey) {
-          // 스키마 마이그레이션: 누락 필드 보강 + 불필요 필드 제거
-          const merged = {
-            ...initialDailyStats,
-            ...parsed,
-            date: todayKey,
-          };
-          merged.paceRatios = Array.isArray(parsed?.paceRatios) ? parsed.paceRatios : [];
-          merged.responseQualities = Array.isArray(parsed?.responseQualities) ? parsed.responseQualities : [];
-
-          // 평균이 없거나 0으로만 저장된 경우에도 배열 기반으로 재계산
-          if (merged.responseQualities.length > 0) {
-            merged.avgResponseQuality =
-              merged.responseQualities.reduce((a, b) => a + (b?.overallScore || 0), 0) / merged.responseQualities.length;
-          }
-
-          console.log(`✓ Loaded stats for ${userEmail}:`, merged);
-          return { stats: merged, userEmail };
+          console.log(`✓ Loaded stats from localStorage for ${userEmail}`);
+          return { stats: parsed, userEmail };
+        } else {
+          // 날짜 불일치 → localStorage 클리어
+          console.log(`⚠ Date mismatch in localStorage (${parsed.date} vs ${todayKey}), clearing...`);
+          localStorage.removeItem(storageKey);
         }
       } catch (e) {
-        console.error('Failed to parse stored stats:', e);
+        console.error('Failed to parse localStorage stats:', e);
+        localStorage.removeItem(storageKey);
       }
     }
 
-    // 날짜가 다르거나 데이터 없으면 새로 시작
-    const freshStats = { ...initialDailyStats, date: todayKey };
-    console.log(`✓ Fresh stats for ${userEmail}`);
-    return { stats: freshStats, userEmail };
+    // 2. localStorage 없거나 날짜 불일치 → 백엔드 시도
+    try {
+      const response = await getDailyStats(userEmail);
+      const backendStats = response.data; // API 응답에서 data 필드 추출
+      const reduxStats = mapBackendToReduxStats(backendStats);
+      // 백엔드 데이터를 localStorage에 저장
+      localStorage.setItem(storageKey, JSON.stringify(reduxStats));
+      console.log(`✓ Loaded stats from backend and saved to localStorage for ${userEmail}`);
+      return { stats: reduxStats, userEmail };
+    } catch (error) {
+      // 404 = 백엔드에도 없음 → 새로 시작
+      if (error.response?.status === 404) {
+        const freshStats = { ...initialDailyStats, date: todayKey };
+        localStorage.setItem(storageKey, JSON.stringify(freshStats));
+        console.log(`✓ No backend stats found, starting fresh for ${userEmail}`);
+        return { stats: freshStats, userEmail };
+      }
+
+      console.error('Failed to load stats from backend:', error);
+      return rejectWithValue(error.message);
+    }
   }
 );
+
+// 백엔드 저장(현재는 localStorage 우선) - 호출부 호환용
+export const saveStatsToBackend = createAsyncThunk(
+  'speakingStats/saveToBackend',
+  async ({ dailyStats, userEmail }, { rejectWithValue }) => {
+    try {
+      if (!userEmail) return rejectWithValue('No user email provided');
+      if (!dailyStats) return rejectWithValue('No dailyStats provided');
+
+      // localStorage에 먼저 저장(최소 보장)
+      const storageKey = getStorageKey(userEmail);
+      localStorage.setItem(storageKey, JSON.stringify(dailyStats));
+
+      // TODO: 백엔드 업로드 API가 확정되면 여기서 호출
+      return { success: true };
+    } catch (e) {
+      return rejectWithValue(e?.message || 'Failed to save stats');
+    }
+  }
+);
+
+// 백엔드 저장은 세션 종료 시 POST /api/sessions/end를 통해 자동으로 이루어집니다.
+// 프론트엔드는 localStorage를 통한 로컬 캐싱만 수행합니다.
 
 const speakingStatsSlice = createSlice({
   name: 'speakingStats',
@@ -162,7 +193,7 @@ const speakingStatsSlice = createSlice({
         state.dailyStats.date = getTodayKey();
       }
 
-      // localStorage에 저장 (사용자별)
+      // localStorage 저장
       if (state.userEmail) {
         const storageKey = getStorageKey(state.userEmail);
         localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
@@ -199,7 +230,7 @@ const speakingStatsSlice = createSlice({
         };
         state.currentSession.responseQualities.push(record);
 
-        // 일별 통계도 실시간 누적 + 평균 재계산 + localStorage 저장
+        // 일별 통계도 실시간 누적 + 평균 재계산
         if (!state.dailyStats.date) state.dailyStats.date = getTodayKey();
         if (!Array.isArray(state.dailyStats.responseQualities)) state.dailyStats.responseQualities = [];
         state.dailyStats.responseQualities.push(record);
@@ -209,12 +240,33 @@ const speakingStatsSlice = createSlice({
           allQualities.length > 0
             ? (allQualities.reduce((a, b) => a + (b?.overallScore || 0), 0) / allQualities.length)
             : 0;
+      }
+    },
 
-        // localStorage에 저장 (사용자별)
-        if (state.userEmail) {
-          const storageKey = getStorageKey(state.userEmail);
-          localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
-        }
+    // ===== AI 대화 턴 증가 (ChatPage용) =====
+    incrementChatTurn: (state) => {
+      if (state.currentSession.sessionType === 'chat') {
+        if (!state.dailyStats.date) state.dailyStats.date = getTodayKey();
+        state.dailyStats.chatTurnsCount += 1;
+      }
+    },
+
+    // ===== AI 응답 지연 시간 기록 (ChatPage용) =====
+    addResponseLatency: (state, action) => {
+      const { latencyMs } = action.payload;
+
+      if (state.currentSession.sessionType === 'chat' && latencyMs > 0) {
+        if (!state.dailyStats.date) state.dailyStats.date = getTodayKey();
+        if (!Array.isArray(state.dailyStats.responseLatencies)) state.dailyStats.responseLatencies = [];
+
+        state.dailyStats.responseLatencies.push(latencyMs);
+
+        // 평균 재계산
+        const allLatencies = state.dailyStats.responseLatencies;
+        state.dailyStats.avgResponseLatency =
+          allLatencies.length > 0
+            ? (allLatencies.reduce((a, b) => a + b, 0) / allLatencies.length)
+            : 0;
       }
     },
 
@@ -278,19 +330,19 @@ const speakingStatsSlice = createSlice({
         ...initialDailyStats,
         date: getTodayKey(),
       };
-      // localStorage에 저장 (사용자별)
+
+      // localStorage 저장
       if (state.userEmail) {
         const storageKey = getStorageKey(state.userEmail);
         localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
       }
     },
 
-    // 수동 저장 (필요시)
+    // localStorage에 현재 일별 통계 수동 저장
     saveDailyStats: (state) => {
       if (!state.dailyStats.date) {
         state.dailyStats.date = getTodayKey();
       }
-      // localStorage에 저장 (사용자별)
       if (state.userEmail) {
         const storageKey = getStorageKey(state.userEmail);
         localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
@@ -300,13 +352,14 @@ const speakingStatsSlice = createSlice({
 
   extraReducers: (builder) => {
     builder
+      // loadStatsFromStorage thunk
       .addCase(loadStatsFromStorage.pending, (state) => {
         state.isLoading = true;
       })
       .addCase(loadStatsFromStorage.fulfilled, (state, action) => {
         state.isLoading = false;
         state.dailyStats = action.payload.stats;
-        state.userEmail = action.payload.userEmail;  // Set user context
+        state.userEmail = action.payload.userEmail;
       })
       .addCase(loadStatsFromStorage.rejected, (state, action) => {
         state.isLoading = false;
@@ -322,6 +375,8 @@ export const {
   updateRecordingTime,
   updateSpeakingTime,
   addResponseQuality,
+  incrementChatTurn,
+  addResponseLatency,
   startPractice,
   setReferenceAudioDuration,
   updatePracticeSpeakingTime,

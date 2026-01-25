@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import {
   Box,
@@ -23,7 +23,7 @@ import {
   OpenInFull,
   VolumeOff,
 } from '@mui/icons-material';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import ws from '../../config/webSocketConfig';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 
 /**
@@ -47,6 +47,8 @@ export default function TutorFeedbackOverlay() {
   const [feedbacks, setFeedbacks] = useState([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isConnected, setIsConnected] = useState(false);
+  const [wsError, setWsError] = useState(null);
   const { playText } = useTTSAudio();
   const panelRef = useRef(null);
 
@@ -55,8 +57,8 @@ export default function TutorFeedbackOverlay() {
   const [autoExpand, setAutoExpand] = useState(true);         // 자동 패널 확장
   const [autoPlayTTS, setAutoPlayTTS] = useState(false);     // TTS 자동재생
 
-  // WebSocket 메시지 핸들러
-  const handleWebSocketMessage = (message) => {
+  // WebSocket 메시지 핸들러 (useCallback으로 메모이제이션)
+  const handleWebSocketMessage = useCallback((message) => {
     if (message.type === 'feedback') {
       const newFeedback = {
         ...message,
@@ -110,14 +112,34 @@ export default function TutorFeedbackOverlay() {
         fullMessage: message,
       });
     }
-  };
+  }, [autoExpand, autoPlayTTS, playText]);
 
-  // WebSocket 연결
-  const { isConnected, error: wsError } = useWebSocket(
-    user?.email,
-    null, // tutorEmail (학생은 null)
-    handleWebSocketMessage
-  );
+  // WebSocket 연결 (Singleton 사용)
+  useEffect(() => {
+    if (!user?.email) return;
+
+    // Singleton WebSocket 연결
+    const socket = ws.connect();
+
+    // 연결 상태 추적
+    const updateConnectionStatus = () => {
+      setIsConnected(socket?.readyState === WebSocket.OPEN);
+    };
+
+    // 초기 상태 설정
+    updateConnectionStatus();
+
+    // 메시지 리스너 등록
+    const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
+
+    // 연결 상태 폴링 (간단한 방법)
+    const statusInterval = setInterval(updateConnectionStatus, 1000);
+
+    return () => {
+      unsubscribe(); // 리스너만 제거, 연결은 유지
+      clearInterval(statusInterval);
+    };
+  }, [user?.email]);
 
   // 브라우저 알림 권한 요청
   useEffect(() => {

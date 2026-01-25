@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../utils/constants';
 const api = axios.create({
   // DEV에서는 API_BASE_URL이 ''일 수 있음 (Vite proxy 사용)
   baseURL: API_BASE_URL || undefined,
-  timeout: 10000,
+  timeout: 20000, // 람다 콜드 스타트 대기시간 때문에 10 -> 20초로 변경
   headers: {
     'Content-Type': 'application/json',
   },

@@ -3,20 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { login, clearError } from '../store/slices/authSlice';
 import { USER_ROLES } from '../utils/constants';
-import {
-  Box,
-  Container,
-  Paper,
-  Typography,
-  TextField,
-  Button,
-  Alert,
-  CircularProgress,
-  Link,
-  InputAdornment,
-  IconButton,
-} from '@mui/material';
-import { Login as LoginIcon, Visibility, VisibilityOff } from '@mui/icons-material';
+import AuthLayout from '../components/auth/AuthLayout';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -46,118 +33,84 @@ export default function LoginPage() {
   };
 
   return (
-    <Box
-      sx={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      }}
-    >
-      <Container maxWidth="sm">
-        <Paper
-          elevation={10}
-          sx={{
-            p: 4,
-            borderRadius: 3,
-          }}
-        >
-          <Box sx={{ textAlign: 'center', mb: 4 }}>
-            <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 700 }}>
-              🎤 SpeakTracker
-            </Typography>
-            <Typography variant="body1" color="text.secondary">
-              실시간 외국어 발음 학습 플랫폼
-            </Typography>
-          </Box>
+    <AuthLayout title="Welcome Back" subtitle="로그인 정보를 입력해주세요.">
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="flex flex-col gap-2">
+          <label className="text-[#111418] dark:text-white text-sm font-semibold leading-normal ml-1">
+            Email Address
+          </label>
+          <input
+            className="form-input w-full rounded-full text-[#111418] dark:text-white border border-[#dbe0e6] dark:border-gray-700 bg-white dark:bg-background-dark/50 focus:border-primary focus:ring-4 focus:ring-primary/10 h-14 px-6 text-base font-normal placeholder:text-[#617589] transition-all"
+            placeholder="name@company.com"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+          />
+        </div>
 
-          <Box component="form" onSubmit={handleSubmit} sx={{ mt: 3 }}>
-            <TextField
-              fullWidth
-              label="이메일"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="이메일을 입력하세요"
-              required
-              margin="normal"
-              autoComplete="email"
-            />
-
-            <TextField
-              fullWidth
-              label="비밀번호"
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-between items-center ml-1">
+            <label className="text-[#111418] dark:text-white text-sm font-semibold leading-normal">
+              Password
+            </label>
+            <button
+              type="button"
+              className="text-primary text-sm font-semibold hover:underline"
+              onClick={() => alert('비밀번호 찾기는 아직 준비중입니다.')}
+            >
+              Forgot password?
+            </button>
+          </div>
+          <div className="relative">
+            <input
+              className="form-input w-full rounded-full text-[#111418] dark:text-white border border-[#dbe0e6] dark:border-gray-700 bg-white dark:bg-background-dark/50 focus:border-primary focus:ring-4 focus:ring-primary/10 h-14 px-6 pr-14 text-base font-normal placeholder:text-[#617589] transition-all"
+              placeholder="••••••••"
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="비밀번호를 입력하세요"
               required
-              margin="normal"
               autoComplete="current-password"
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton
-                      onClick={() => setShowPassword(!showPassword)}
-                      edge="end"
-                    >
-                      {showPassword ? <VisibilityOff /> : <Visibility />}
-                    </IconButton>
-                  </InputAdornment>
-                )
-              }}
             />
-
-            {error && (
-              <Alert severity="error" sx={{ mt: 2 }}>
-                {error}
-              </Alert>
-            )}
-
-            <Button
-              fullWidth
-              type="submit"
-              variant="contained"
-              size="large"
-              disabled={isLoading}
-              startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <LoginIcon />}
-              sx={{
-                mt: 3,
-                py: 1.5,
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                '&:hover': {
-                  background: 'linear-gradient(135deg, #5568d3 0%, #6a3f8f 100%)',
-                },
-              }}
+            <button
+              type="button"
+              className="absolute right-5 top-1/2 -translate-y-1/2 text-[#617589] hover:text-[#111418] dark:hover:text-white transition"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label="비밀번호 표시 전환"
             >
-              {isLoading ? '로그인 중...' : '로그인'}
-            </Button>
+              <span className="material-symbols-outlined text-xl">
+                {showPassword ? 'visibility_off' : 'visibility'}
+              </span>
+            </button>
+          </div>
+        </div>
 
-            <Box sx={{ mt: 3, textAlign: 'center' }}>
-              <Typography variant="body2" color="text.secondary">
-                계정이 없으신가요?{' '}
-                <Link
-                  component="button"
-                  variant="body2"
-                  onClick={() => navigate('/signup')}
-                  sx={{
-                    cursor: 'pointer',
-                    fontWeight: 600,
-                    color: '#667eea',
-                    textDecoration: 'none',
-                    '&:hover': {
-                      textDecoration: 'underline',
-                    },
-                  }}
-                >
-                  회원가입
-                </Link>
-              </Typography>
-            </Box>
-          </Box>
-        </Paper>
-      </Container>
-    </Box>
+        {error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+            {error}
+          </div>
+        )}
+
+        <button
+          className="w-full flex items-center justify-center rounded-full h-14 bg-primary text-white text-base font-bold tracking-wide hover:bg-primary/90 transition-colors shadow-lg shadow-primary/25 mt-4 disabled:opacity-60 disabled:cursor-not-allowed"
+          type="submit"
+          disabled={isLoading}
+        >
+          {isLoading ? '로그인 중...' : 'Login to Account'}
+        </button>
+      </form>
+
+      <div className="mt-8 flex items-center justify-center gap-2 text-[#617589] dark:text-gray-400 text-sm font-medium">
+        <span>계정이 없으신가요?</span>
+        <button
+          type="button"
+          className="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-primary font-bold hover:bg-primary/10 hover:underline transition"
+          onClick={() => navigate('/signup')}
+        >
+          회원가입
+        </button>
+      </div>
+    </AuthLayout>
   );
 }

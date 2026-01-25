@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="SpeakTracker - AI 기반 실시간 외국어 발음 학습 플랫폼. 튜터와 학생을 연결하는 혁신적인 영어 학습 솔루션.">
+  <meta name="keywords" content="영어 학습, 발음 교정, AI 회화, 실시간 모니터링, SpeakTracker">
+  <title>SpeakTracker - 팀 소개</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container">
+      <h2 class="hero-title">AI가 측정하는 실제 발음 시간</h2>
+      <p class="hero-subtitle">
+        입 움직임과 음성을 동시에 감지하여<br>
+        당신의 진짜 발음 시간을 정확히 측정합니다
+      </p>
+      <div class="hero-stats">
+        <div class="stat-item">
+          <span class="stat-number">🎯</span>
+          <p class="stat-label">정확한 발음 측정</p>
+        </div>
+        <div class="stat-item">
+          <span class="stat-number">🤖</span>
+          <p class="stat-label">AI 회화 연습</p>
+        </div>
+        <div class="stat-item">
+          <span class="stat-number">👨‍🏫</span>
+          <p class="stat-label">튜터 관리</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- About Section -->
+  <section class="about">
+    <div class="container">
+      <h2 class="section-title">About Our Project</h2>
+      <div class="about-content">
+        <p class="about-text">
+          SpeakTracker는 <strong>AI 기반 얼굴인식과 음성 감지</strong>를 활용한 1:N 실시간 외국어 발음 학습 플랫폼입니다.
+          학생이 외국어를 학습할 때 실제로 발음하는 시간을 자동으로 측정하고, 튜터가 다수의 학생을
+          모니터링하며 피드백을 제공하는 서버리스 아키텍처 기반 시스템입니다.
+        </p>
+        <div class="tech-stack">
+          <h3>Core Technologies</h3>
+          <div class="tech-grid">
+            <span class="tech-badge">React 18</span>
+            <span class="tech-badge">AWS Lambda</span>
+            <span class="tech-badge">DynamoDB</span>
+            <span class="tech-badge">WebSocket</span>
+            <span class="tech-badge">MediaPipe</span>
+            <span class="tech-badge">Whisper STT</span>
+            <span class="tech-badge">Claude API</span>
+            <span class="tech-badge">AWS Polly TTS</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- Architecture Section -->
+  <section class="architecture">
+    <div class="container">
+      <h2 class="section-title">시스템 아키텍처</h2>
+      <div class="arch-content">
+        <div class="arch-diagram">
+          <div class="arch-layer">
+            <h4>Frontend</h4>
+            <p>React + Vite, Material-UI, Redux Toolkit</p>
+          </div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-layer">
+            <h4>API Gateway</h4>
+            <p>REST API + WebSocket (AWS)</p>
+          </div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-layer">
+            <h4>Backend</h4>
+            <p>AWS Lambda (Serverless)</p>
+          </div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-layer">
+            <h4>Data & Services</h4>
+            <p>DynamoDB, S3, Cognito, Polly, Claude API</p>
+          </div>
+        </div>
+        <div class="arch-highlights">
+          <h4>아키텍처 특징</h4>
+          <ul>
+            <li>✅ <strong>서버리스 아키텍처</strong> - 비용 효율적인 인프라</li>
+            <li>✅ <strong>확장 가능한 설계</strong> - Auto-scaling Lambda</li>
+            <li>✅ <strong>보안</strong> - AWS Cognito 인증/인가</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Team Section -->
+  <section class="team">
+    <div class="container">
+      <h2 class="section-title">Our Team</h2>
+      <p class="team-intro">
+        Megazone Spring Cloud 2차 팀 프로젝트
+      </p>
+      <div class="team-placeholder">
+        <div class="team-icon">👥</div>
+        <p class="team-message">
+          팀장 : 안창완<br>
+          팀원 : 강형원, 황성준
+        </p>
+      </div>
+      <!-- Team members can be added here when photos are available -->
+    </div>
+  </section>
+
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <img src="assets/logo-1024.png" alt="SpeakTracker" class="footer-logo">
+          <p class="footer-tagline">SpeakTracker</p>
+        </div>
+        <div class="footer-links">
+          <h4>Quick Links</h4>
+          <ul>
+            <li><a href="#about">About</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#architecture">Architecture</a></li>
+            <li><a href="#team">Team</a></li>
+          </ul>
+        </div>
+        <div class="footer-contact">
+          <h4>Contact</h4>
+          <p>Email: contact@speaktracker.com</p>
+          <p>GitHub: github.com/speaktracker</p>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>&copy; 2026 SpeakTracker Team. All rights reserved.</p>
+        <p class="footer-tech">Built with ❤️ using React, AWS, and AI</p>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
