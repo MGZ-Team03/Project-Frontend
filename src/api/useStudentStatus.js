@@ -1,5 +1,5 @@
 import {useCallback, useEffect} from "react";
-import axios from "axios";
+import api from "./axios";
 
 // 훅과 별도로 상태 전송 함수 export
 export const sendStudentStatus = async (userEmail, tutorEmail, page) => {
@@ -20,14 +20,7 @@ export const sendStudentStatus = async (userEmail, tutorEmail, page) => {
     console.log(payload);
 
     try {
-        const {data} = await axios.post("/api/student-status",
-            payload,
-            {
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
+        const {data} = await api.post("/api/student-status", payload);
         return data;
     } catch (error) {
         throw error;

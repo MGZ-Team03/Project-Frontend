@@ -29,3 +29,19 @@ export async function endSession(payload) {
   const res = await axios.post('/api/sessions/end', payload);
   return res.data;
 }
+
+/**
+ * 세션 이력 조회
+ * @param {string} studentEmail - 학생 이메일
+ * @param {number} [limit=10] - 조회할 최대 개수
+ * @returns {Promise<Object>} { success: boolean, sessions: Array }
+ */
+export async function getSessionHistory(studentEmail, limit = 10) {
+  const res = await axios.get('/api/sessions/history', {
+    params: {
+      student_email: studentEmail,
+      limit,
+    },
+  });
+  return res.data;
+}

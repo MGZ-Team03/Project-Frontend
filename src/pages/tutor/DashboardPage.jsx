@@ -115,7 +115,9 @@ const MOCK_STUDENTS = [
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
 import { sendFeedback } from '../../api/tutorFeedback';
-import {WS_URL} from "../../utils/constants.js";
+import NotificationDialog from '../../components/tutor/NotificationDialog';
+import { getNotifications } from '../../api/notifications';
+// import {WS_URL} from "../../utils/constants.js";
 
 // 목업 학생 데이터
 // const MOCK_STUDENTS = [
@@ -296,6 +298,52 @@ export default function DashboardPage() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const user = useSelector(state => state.auth.user);
 
+  // 알림 관련 state
+  const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // 알림 목록 가져오기
+  const fetchNotifications = async () => {
+    try {
+      const result = await getNotifications(false); // 안 읽은 알림만
+      console.log('📢 알림 API 응답:', result);
+
+      const notificationList = result?.data?.notifications || [];
+      const count = result?.data?.unreadCount || 0;
+
+      console.log('📢 알림 목록:', notificationList);
+      console.log('📢 읽지 않은 알림 개수:', count);
+
+      setNotifications(notificationList);
+      setUnreadCount(count);
+    } catch (error) {
+      console.error('❌ 알림 조회 실패:', error);
+    }
+  };
+
+  // 알림 다이얼로그 열기
+  const handleNotificationClick = () => {
+    setNotificationDialogOpen(true);
+  };
+
+  // 알림 목록 갱신 (승인/거부 후)
+  const handleNotificationUpdate = async () => {
+    await fetchNotifications();
+  };
+
+  // 초기 알림 로드 및 주기적 폴링
+  useEffect(() => {
+    if (user?.role === 'tutor') {
+      fetchNotifications();
+
+      // 30초마다 알림 갱신
+      const interval = setInterval(fetchNotifications, 30000);
+
+      return () => clearInterval(interval);
+    }
+  }, [user?.role]);
+
   console.log("user auth : " + JSON.stringify(user));
   useEffect(() => {
 
@@ -366,9 +414,9 @@ export default function DashboardPage() {
   const warningStudents = students.filter(s => s.warning || s.alert);
 
   // const [students, setStudents] = useState([]);
-  const [summary, setSummary] = useState({ total: 0, active: 0, speaking: 0, warning: 0 });
-  const [wsStatus, setWsStatus] = useState('connecting');
-  const [lastUpdate, setLastUpdate] = useState(null);
+  // const [summary, setSummary] = useState({ total: 0, active: 0, speaking: 0, warning: 0 });
+  // const [wsStatus, setWsStatus] = useState('connecting');
+  // const [lastUpdate, setLastUpdate] = useState(null);
 
 
   const handleStudentClick = (email) => {
@@ -480,7 +528,11 @@ export default function DashboardPage() {
 
 
   return (
-      <TutorLayout studentCount={students.length}>
+      <TutorLayout
+        studentCount={students.length}
+        onNotificationClick={handleNotificationClick}
+        unreadNotificationCount={unreadCount}
+      >
         <Box sx={{ maxWidth: 900, mx: 'auto', width: '100%' }}>
           {/* 요약 통계 */}
           <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -604,6 +656,14 @@ export default function DashboardPage() {
           <FeedbackNotification
               notification={notification}
               onClose={() => setNotification(null)}
+          />
+
+          {/* 튜터 등록 요청 알림 다이얼로그 */}
+          <NotificationDialog
+            open={notificationDialogOpen}
+            onClose={() => setNotificationDialogOpen(false)}
+            notifications={notifications}
+            onUpdate={handleNotificationUpdate}
           />
         </Box>
       </TutorLayout>

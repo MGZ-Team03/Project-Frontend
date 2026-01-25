@@ -14,6 +14,12 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const reconnectTimeoutRef = useRef(null);
+  const onMessageRef = useRef(onMessage);
+
+  // onMessage가 바뀔 때마다 ref 업데이트 (useEffect 재실행 방지)
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
 
   useEffect(() => {
     if (!userEmail) return;
@@ -35,9 +41,9 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          
-          if (onMessage) {
-            onMessage(data);
+
+          if (onMessageRef.current) {
+            onMessageRef.current(data);
           }
         } catch (err) {
           console.error('❌ 메시지 파싱 오류:', err);
@@ -74,7 +80,7 @@ export const useWebSocket = (userEmail, tutorEmail, onMessage) => {
         wsRef.current.close();
       }
     };
-  }, [userEmail, tutorEmail, onMessage]);
+  }, [userEmail, tutorEmail]); // onMessage 의존성 제거 (ref로 처리)
 
   const sendMessage = (message) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
