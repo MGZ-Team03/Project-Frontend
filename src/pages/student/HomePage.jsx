@@ -29,9 +29,9 @@ import {
 import StudentLayout from '../../components/common/StudentLayout';
 import TutorSearchDialog from '../../components/student/TutorSearchDialog';
 import { scenarios } from '../../data/conversation/scenarios';
-import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
 import { getNotifications } from '../../api/notifications';
+import ws from '../../config/webSocketConfig';
 
 export default function HomePage() {
   const user = useSelector(state => state.auth.user);
@@ -75,59 +75,38 @@ export default function HomePage() {
     }
   }, [studentEmail]);
 
-  // 메시지 핸들러 함수 (WebSocket 메시지 수신 시 호출)
+  // WebSocket 메시지 핸들러 - 실시간 알림 수신
   const handleWebSocketMessage = useCallback((data) => {
-    console.log('📩 [HomePage] WebSocket 메시지 수신:', data);
-    
     // 승인 알림
     if (data.type === 'TUTOR_REQUEST_APPROVED') {
-      console.log('✅ [HomePage] 승인 알림 처리');
-      setUnreadCount(prev => prev + 1);  // 즉시 카운트 증가
+      setUnreadCount(prev => prev + 1);
       setSnackbar({
         open: true,
-        message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
+        message: `${data.data?.tutor_name || '튜터'}님이 요청을 승인했습니다! 🎉`,
         severity: 'success'
       });
     }
     
     // 거부 알림
     if (data.type === 'TUTOR_REQUEST_REJECTED') {
-      console.log('❌ [HomePage] 거부 알림 처리');
-      setUnreadCount(prev => prev + 1);  // 즉시 카운트 증가
-      const reason = data.data.rejection_reason || '사유 없음';
+      setUnreadCount(prev => prev + 1);
+      const reason = data.data?.rejection_reason || '사유 없음';
       setSnackbar({
         open: true,
-        message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
+        message: `${data.data?.tutor_name || '튜터'}님이 요청을 거부했습니다: ${reason}`,
         severity: 'error'
       });
     }
   }, []);
 
-
-  // 웹소켓 연결만 수행 (데이터 전송 없음)
-  const getData = useCallback(() => {
-    if(!user?.email) {
-      return null;
-    }
-    return {
-      action: "status",
-      data: {
-        tutorEmail: user.tutorEmail,
-        studentEmail: user.email,
-        status: "active",
-        room: "no room",  // 홈은 "no room"
-        assignedAt: new Date().toISOString().split("T")[0],
-      }
-    };
-  },[user?.email]);
-
-  const socket = useWebSocket(getData, {
-    sendImmediately: true,
-    enableInterval: true,
-    interval: 5000,
-    onMessage: handleWebSocketMessage  // 메시지 핸들러 추가
-  });
-
+  // WebSocket 리스너 등록 - 싱글톤 사용
+  useEffect(() => {
+    if (!studentEmail) return;
+    
+    ws.connect();
+    const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
+    return () => unsubscribe();
+  }, [studentEmail, handleWebSocketMessage]);
 
   // TODO: 실제 데이터는 Redux나 API에서 가져오기
   const todayStats = {

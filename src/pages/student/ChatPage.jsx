@@ -66,7 +66,6 @@ import { calculateResponseQuality } from '../../utils/conversation/responseQuali
 
 
 
-import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 // Data
 import { scenarios, getScenarioById } from '../../data/conversation/scenarios';
 
@@ -163,30 +162,6 @@ export default function ChatPage() {
     transcribe: whisperTranscribe,
     error: whisperError,
   } = useWhisperSTT();
-
-  const getData = useCallback(() => {
-    if(!user?.email) return null;
-
-    return {
-      action: "status",
-      data: {
-        tutorEmail: user.tutorEmail,
-        studentEmail: user.email,
-        status: "active",
-        room: "ai",  // 대화는 "ai"
-        assignedAt: new Date().toISOString().split("T")[0],
-      }
-    };
-  }, [user?.email, user?.tutorEmail]);
-
-
-  // 페이지 진입 시 즉시 전송 + 5초마다 전송
-  const socket = useWebSocket(getData, {
-    sendImmediately: true,
-    enableInterval: true,
-    interval: 5000
-  });
-
 
   // Redux에서 전역 Whisper 상태 가져오기
   const whisperStatus = useSelector(selectWhisperPreloadStatus);

@@ -47,8 +47,6 @@ import { useSentenceAudioSession } from '../../hooks/useSentenceAudioSession';
 import { extractVADSegments } from '../../utils/audioTrimmer';
 import { createPcmRecorder } from '../../utils/pcmRecorder';
 
-import ws from "../../config/webSocketConfig.js";
-
 // Redux
 import {
   startSession,

@@ -1,9 +1,9 @@
 // 튜터 실시간 모니터링 대시보드 (목업)
 
-import {useEffect, useState} from 'react';
+import {useEffect, useState, useCallback} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import ws from '../../config/webSocketConfig';
 import {
   Box,
   Typography,
@@ -264,36 +264,40 @@ export default function DashboardPage() {
     loadStudents();
   }, [tutorEmail]);
 
-  // WebSocket 연결 - 튜터 등록 요청 알림 수신
-  const { isConnected, error: wsError } = useWebSocket(
-    tutorEmail,
-    null, // 튜터는 tutor_email 파라미터 불필요
-    (data) => {
-      // 새로운 튜터 등록 요청 알림
-      if (data.type === 'NEW_TUTOR_REQUEST') {
-        setNotification({
-          message: `${data.data.student_name}님이 등록 요청을 보냈습니다!`,
-          severity: 'info'
-        });
-        
-        // 실시간으로 알림 추가 (백엔드 API 없이 WebSocket 데이터로 직접 추가)
-        const newNotification = {
-          notification_id: data.data.request_id,
-          type: 'NEW_TUTOR_REQUEST',
-          data: data.data,
-          created_at: data.data.created_at || Date.now(),
-          read: false,
-        };
-        
-        setNotifications(prev => [newNotification, ...prev]);
-      }
+  // WebSocket 메시지 핸들러 - 싱글톤 WebSocket 사용
+  const handleWebSocketMessage = useCallback((data) => {
+    // 새로운 튜터 등록 요청 알림
+    if (data.type === 'NEW_TUTOR_REQUEST') {
+      setNotification({
+        message: `${data.data.student_name}님이 등록 요청을 보냈습니다!`,
+        severity: 'info'
+      });
       
-      // 기타 알림 타입 처리
-      if (data.type === 'FEEDBACK_RECEIVED' || data.type === 'SESSION_UPDATE') {
-        // 기존 알림 처리 로직
-      }
+      // 실시간으로 알림 추가 (백엔드 API 없이 WebSocket 데이터로 직접 추가)
+      const newNotification = {
+        notification_id: data.data.request_id,
+        type: 'NEW_TUTOR_REQUEST',
+        data: data.data,
+        created_at: data.data.created_at || Date.now(),
+        read: false,
+      };
+      
+      setNotifications(prev => [newNotification, ...prev]);
     }
-  );
+    
+    // 기타 알림 타입 처리
+    if (data.type === 'FEEDBACK_RECEIVED' || data.type === 'SESSION_UPDATE') {
+      // 기존 알림 처리 로직
+    }
+  }, []);
+
+  // WebSocket 리스너 등록 - 싱글톤 사용
+  useEffect(() => {
+    // 싱글톤 WebSocket 연결 (이미 연결되어 있으면 재사용)
+    ws.connect();
+    const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
+    return () => unsubscribe();
+  }, [handleWebSocketMessage]);
 
   // 세션 ID 생성 함수
   const generateSessionId = (studentEmail) => {
