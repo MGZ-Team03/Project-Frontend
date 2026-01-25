@@ -94,10 +94,10 @@ export function mapBackendToReduxStats(backendStats) {
     avgNetSpeakingDensity: backendStats.avgNetSpeakingDensity || 0,
     avgResponseQuality: backendStats.avgResponseQuality || 0,
     avgResponseLatency: backendStats.avgResponseLatency || 0,
-    // 백엔드는 집계 통계만 제공하므로 상세 배열은 빈 배열로 초기화
-    paceRatios: [],
-    responseLatencies: [],
-    responseQualities: [],
+    // 누적 평균 계산용 카운터 (메모리 누수 방지)
+    paceRatioCount: backendStats.paceRatioCount || 0,
+    responseQualityCount: backendStats.responseQualityCount || 0,
+    responseLatencyCount: backendStats.responseLatencyCount || 0,
   };
 }
 
@@ -123,9 +123,10 @@ export function mapDailyStatsToBackend(dailyStats, userEmail) {
     avg_net_speaking_density: dailyStats.avgNetSpeakingDensity || 0,
     avg_response_quality: dailyStats.avgResponseQuality || 0,
 
-    pace_ratios: Array.isArray(dailyStats.paceRatios) ? dailyStats.paceRatios : [],
-    response_latencies: Array.isArray(dailyStats.responseLatencies) ? dailyStats.responseLatencies : [],
-    response_qualities: Array.isArray(dailyStats.responseQualities) ? dailyStats.responseQualities : [],
+    // 누적 평균 계산용 카운터 (배열 대신 사용)
+    pace_ratio_count: dailyStats.paceRatioCount || 0,
+    response_quality_count: dailyStats.responseQualityCount || 0,
+    response_latency_count: dailyStats.responseLatencyCount || 0,
   };
 }
 

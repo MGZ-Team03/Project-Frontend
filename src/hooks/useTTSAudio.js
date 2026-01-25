@@ -6,6 +6,9 @@ const ttsCache = new Map();
 // key(text+voice) -> Promise<audioUrl>
 const ttsInFlight = new Map();
 
+// TTS 캐시 최대 크기 (메모리 누수 방지)
+const MAX_TTS_CACHE_SIZE = 50;
+
 function makeKey(text, voiceId, language) {
   return `${voiceId || 'default'}::${language || 'default'}::${text}`;
 }
@@ -126,7 +129,14 @@ export function useTTSAudio() {
         }
         audioUrl = await promise;
         ttsInFlight.delete(key);
-        if (audioUrl) ttsCache.set(key, audioUrl);
+        if (audioUrl) {
+          // 캐시 크기 제한 (메모리 누수 방지: 오래된 항목 제거)
+          if (ttsCache.size >= MAX_TTS_CACHE_SIZE) {
+            const firstKey = ttsCache.keys().next().value;
+            ttsCache.delete(firstKey);
+          }
+          ttsCache.set(key, audioUrl);
+        }
       }
 
       if (!audioUrl) throw new Error('TTS audioUrl이 없습니다.');

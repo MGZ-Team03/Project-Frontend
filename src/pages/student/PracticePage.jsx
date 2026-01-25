@@ -76,6 +76,9 @@ const sentenceBatchCache = new Map(); // key -> { sessionId: string|null, senten
 const sentenceBatchFailAt = new Map(); // key -> lastFailedAt(ms)
 const AUDIO_POLL_SCHEDULE_MS = [0, 500, 1000, 2000, 3000, 5000];
 
+// 캐시 크기 제한 (메모리 누수 방지)
+const MAX_SENTENCE_CACHE_SIZE = 20;
+
 function ProgressRing({ valuePercent }) {
   const size = 96;
   const stroke = 6;
@@ -427,6 +430,11 @@ export default function PracticePage() {
           .map((text, idx) => ({ id: `${topicId}-${difficulty}-${idx}`, text }));
 
         // IMPORTANT: cache should be written even if this component instance was unmounted (StrictMode)
+        // 캐시 크기 제한 (메모리 누수 방지: 오래된 항목 제거)
+        if (sentenceBatchCache.size >= MAX_SENTENCE_CACHE_SIZE) {
+          const firstKey = sentenceBatchCache.keys().next().value;
+          sentenceBatchCache.delete(firstKey);
+        }
         sentenceBatchCache.set(loadKey, { sessionId: generated?.sessionId || null, sentences: finalList, savedAt: Date.now() });
 
         if (!cancelled) {
