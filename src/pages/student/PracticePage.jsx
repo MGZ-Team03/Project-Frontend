@@ -34,7 +34,6 @@ import { useSpeechActivityTracker } from '../../hooks/conversation/useSpeechActi
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { useWhisperSTT } from '../../hooks/useWhisperSTT';
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
-import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 
 // API
 import { generatePracticeSession } from '../../api/sentences';
@@ -47,8 +46,6 @@ import { getScenarioById } from '../../data/conversation/scenarios';
 import { useSentenceAudioSession } from '../../hooks/useSentenceAudioSession';
 import { extractVADSegments } from '../../utils/audioTrimmer';
 import { createPcmRecorder } from '../../utils/pcmRecorder';
-
-import ws from "../../config/webSocketConfig.js";
 
 // Redux
 import {

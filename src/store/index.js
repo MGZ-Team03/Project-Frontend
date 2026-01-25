@@ -2,6 +2,7 @@ import { configureStore } from '@reduxjs/toolkit';
 import authReducer from './slices/authSlice';
 import speakingStatsReducer from './slices/speakingStatsSlice';
 import whisperPreloadReducer from './slices/whisperPreloadSlice';
+import ws from '../config/webSocketConfig';
 
 export const store = configureStore({
   reducer: {
@@ -13,5 +14,8 @@ export const store = configureStore({
     // students: studentReducer,   // 추후 추가
   },
 });
+
+// WebSocket 싱글톤에 store 주입
+ws.setStore(store);
 
 export default store;

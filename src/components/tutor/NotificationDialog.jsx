@@ -55,24 +55,16 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
   const handleApprove = async (requestId) => {
     try {
       setProcessing(requestId);
-      console.log('✅ 승인 처리 시작:', requestId);
       await processTutorRequest(requestId, 'approve');
 
-      // 알림 읽음 처리 (notification_id_timestamp 사용)
+      // 알림 읽음 처리
       const notification = notifications.find(n => n.data?.request_id === requestId);
-      console.log('📢 찾은 알림:', notification);
-      console.log('📢 notification_id_timestamp:', notification?.notification_id_timestamp);
-
-      if (notification?.notification_id_timestamp) {
+      if (notification?.notificationIdTimestamp) {
         try {
-          console.log('📖 알림 읽음 처리 시도:', notification.notification_id_timestamp);
-          await markNotificationAsRead(notification.notification_id_timestamp);
-          console.log('✅ 알림 읽음 처리 완료');
+          await markNotificationAsRead(notification.notificationIdTimestamp);
         } catch (readErr) {
-          console.error('❌ 알림 읽음 처리 실패:', readErr);
+          console.error('알림 읽음 처리 실패:', readErr);
         }
-      } else {
-        console.warn('⚠️ notification_id_timestamp가 없습니다. 알림 구조:', notification);
       }
 
       // 알림 목록 갱신
@@ -81,7 +73,7 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
       }
     } catch (err) {
       setError('승인 처리 중 오류가 발생했습니다.');
-      console.error('❌ Approve error:', err);
+      console.error('Approve error:', err);
     } finally {
       setProcessing(null);
     }
@@ -105,24 +97,24 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
       setProcessing(requestId);
       setConfirmDialog({ open: false, requestId: null, studentName: '', studentEmail: '' });
 
-      console.log('❌ 거부 처리 시작:', requestId);
       await processTutorRequest(requestId, 'reject', '현재 학생을 받을 수 없습니다.');
 
-      // 알림 읽음 처리 (notification_id_timestamp 사용)
+      // 알림 읽음 처리
+      console.log('🔍 찾는 requestId:', requestId);
+      console.log('🔍 notifications:', notifications);
       const notification = notifications.find(n => n.data?.request_id === requestId);
-      console.log('📢 찾은 알림:', notification);
-      console.log('📢 notification_id_timestamp:', notification?.notification_id_timestamp);
-
-      if (notification?.notification_id_timestamp) {
+      console.log('🔍 찾은 notification:', notification);
+      console.log('🔍 notificationIdTimestamp:', notification?.notificationIdTimestamp);
+      
+      if (notification?.notificationIdTimestamp) {
         try {
-          console.log('📖 알림 읽음 처리 시도:', notification.notification_id_timestamp);
-          await markNotificationAsRead(notification.notification_id_timestamp);
-          console.log('✅ 알림 읽음 처리 완료');
+          await markNotificationAsRead(notification.notificationIdTimestamp);
+          console.log('✅ 읽음 처리 API 호출 완료');
         } catch (readErr) {
-          console.error('❌ 알림 읽음 처리 실패:', readErr);
+          console.error('알림 읽음 처리 실패:', readErr);
         }
       } else {
-        console.warn('⚠️ notification_id_timestamp가 없습니다. 알림 구조:', notification);
+        console.warn('⚠️ notification 또는 notificationIdTimestamp 없음');
       }
 
       // 알림 목록 갱신
@@ -131,7 +123,7 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
       }
     } catch (err) {
       setError('거부 처리 중 오류가 발생했습니다.');
-      console.error('❌ Reject error:', err);
+      console.error('Reject error:', err);
     } finally {
       setProcessing(null);
     }
@@ -149,6 +141,7 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
         onClose={onClose}
         maxWidth="sm"
         fullWidth
+        disableRestoreFocus
         PaperProps={{
           sx: { minHeight: '60vh', maxHeight: '80vh' }
         }}
@@ -276,6 +269,7 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
         onClose={handleRejectCancel}
         maxWidth="xs"
         fullWidth
+        disableRestoreFocus
       >
         <DialogTitle>
           <Stack direction="row" alignItems="center" spacing={1}>

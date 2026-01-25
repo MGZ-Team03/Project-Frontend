@@ -44,11 +44,13 @@ function detectLanguage(text) {
  */
 export default function TutorFeedbackOverlay() {
   const user = useSelector((state) => state.auth.user);
+  // WebSocket 연결 상태
+  const [isConnected, setIsConnected] = useState(false);
+  const [wsError, setWsError] = useState(null);
+
   const [feedbacks, setFeedbacks] = useState([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [isConnected, setIsConnected] = useState(false);
-  const [wsError, setWsError] = useState(null);
   const { playText } = useTTSAudio();
   const panelRef = useRef(null);
 
@@ -73,13 +75,18 @@ export default function TutorFeedbackOverlay() {
         return updated;
       });
       setUnreadCount((prev) => prev + 1);
+      
+      // 방해금지 모드일 때는 알림/확장/TTS 모두 건너뜀
+      if (doNotDisturb) {
+        return;
+      }
             
       // 자동 패널 확장 (설정에 따라)
       if (autoExpand) {
         setIsExpanded(true);
       }
             
-      // 브라우저 알림 (방해금지 모드 아닐 때만)
+      // 브라우저 알림
       if ('Notification' in window) {
         if (Notification.permission === 'granted') {
           try {
@@ -101,9 +108,20 @@ export default function TutorFeedbackOverlay() {
       }
       
       // TTS 자동 재생 (설정에 따라)
-      if (autoPlayTTS && message.messageType === 'tts' && message.message) {
-        const language = detectLanguage(message.message);
-        playText(message.message, { language });
+      const isTTS = message.messageType === 'tts';
+      if (autoPlayTTS && isTTS && message.message) {
+        // audio_url이 있으면 우선 사용, 없으면 브라우저 TTS
+        if (message.audio_url) {
+          const audio = new Audio(message.audio_url);
+          audio.play().catch((err) => {
+            console.error('오디오 재생 실패, 브라우저 TTS로 대체:', err);
+            const language = detectLanguage(message.message);
+            playText(message.message, { language });
+          });
+        } else {
+          const language = detectLanguage(message.message);
+          playText(message.message, { language });
+        }
       }
     } else {
       console.warn('⚠️ 피드백 타입이 아닙니다:', {
@@ -112,7 +130,7 @@ export default function TutorFeedbackOverlay() {
         fullMessage: message,
       });
     }
-  }, [autoExpand, autoPlayTTS, playText]);
+  }, [doNotDisturb, autoExpand, autoPlayTTS, playText]);
 
   // WebSocket 연결 (Singleton 사용)
   useEffect(() => {
@@ -139,7 +157,7 @@ export default function TutorFeedbackOverlay() {
       unsubscribe(); // 리스너만 제거, 연결은 유지
       clearInterval(statusInterval);
     };
-  }, [user?.email]);
+  }, [user?.email, handleWebSocketMessage]);
 
   // 브라우저 알림 권한 요청
   useEffect(() => {
@@ -472,7 +490,7 @@ export default function TutorFeedbackOverlay() {
                           {/* 오디오 재생 버튼 */}
                           <IconButton
                             size="small"
-                            onClick={() => handlePlayAudio(fb.message, null)}
+                            onClick={() => handlePlayAudio(fb.message, fb.audio_url)}
                             sx={{ color: '#ff9800' }}
                             title="음성으로 듣기"
                           >

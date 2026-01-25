@@ -8,10 +8,10 @@ import {
 import StudentLayout from '../../components/common/StudentLayout';
 import TutorSearchDialog from '../../components/student/TutorSearchDialog';
 import { scenarios } from '../../data/conversation/scenarios';
-import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
 // import {useStudentStatus} from "../../api/useStudentStatus.js";
 import { getNotifications } from '../../api/notifications';
+import ws from '../../config/webSocketConfig';
 
 export default function HomePage() {
   const user = useSelector(state => state.auth.user);
@@ -52,15 +52,20 @@ export default function HomePage() {
   const speakingTimeSec = Math.floor((dailySpeakingMs + sessionSpeakingMs) / 1000);
   const speakingRatio = todayTimeSec > 0 ? Math.round((speakingTimeSec / todayTimeSec) * 100) : 0;
 
-  // 알림 개수 조회
+  // 알림 개수 조회 (TUTOR_REQUEST_APPROVED, TUTOR_REQUEST_REJECTED 타입만)
   const loadUnreadCount = async () => {
     if (!studentEmail) return;
     try {
       const response = await getNotifications(false);
-      // API 응답 구조: { success: true, data: { notifications: [...], unreadCount: n } }
-      // 또는: { notifications: [...], unreadCount: n }
-      const unread = response.data?.unreadCount || response.unreadCount || 0;
-      setUnreadCount(unread);
+      // API 응답 구조에서 알림 목록 추출
+      const allNotifications = response.data?.notifications || response.notifications || [];
+      
+      // TUTOR_REQUEST_APPROVED, TUTOR_REQUEST_REJECTED 타입만 필터링하여 개수 계산
+      const tutorNotificationCount = allNotifications.filter(
+        n => n.type === 'TUTOR_REQUEST_APPROVED' || n.type === 'TUTOR_REQUEST_REJECTED'
+      ).length;
+      
+      setUnreadCount(tutorNotificationCount);
     } catch (err) {
       console.error('알림 개수 조회 실패:', err);
     }
@@ -73,54 +78,39 @@ export default function HomePage() {
     }
   }, [studentEmail]);
 
-  // 메시지 핸들러 함수 (WebSocket 메시지 수신 시 호출)
+  // WebSocket 메시지 핸들러 - 실시간 알림 수신
   const handleWebSocketMessage = useCallback((data) => {
     // 승인 알림
     if (data.type === 'TUTOR_REQUEST_APPROVED') {
-      setUnreadCount(prev => prev + 1);  // 즉시 카운트 증가
+      setUnreadCount(prev => prev + 1);
       setSnackbar({
         open: true,
-        message: `${data.data.tutor_name} 튜터님이 요청을 승인했습니다! 🎉`,
+        message: `${data.data?.tutor_name || '튜터'}님이 요청을 승인했습니다! 🎉`,
         severity: 'success'
       });
     }
     
     // 거부 알림
     if (data.type === 'TUTOR_REQUEST_REJECTED') {
-      setUnreadCount(prev => prev + 1);  // 즉시 카운트 증가
-      const reason = data.data.rejection_reason || '사유 없음';
+      setUnreadCount(prev => prev + 1);
+      const reason = data.data?.rejection_reason || '사유 없음';
       setSnackbar({
         open: true,
-        message: `${data.data.tutor_name} 튜터님이 요청을 거부했습니다: ${reason}`,
+        message: `${data.data?.tutor_name || '튜터'}님이 요청을 거부했습니다: ${reason}`,
         severity: 'error'
       });
     }
   }, []);
 
+  // WebSocket 리스너 등록 - 싱글톤 사용
+  useEffect(() => {
+    if (!studentEmail) return;
+    
+    ws.connect();
+    const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
+    return () => unsubscribe();
+  }, [studentEmail, handleWebSocketMessage]);
 
-  // 웹소켓 연결만 수행 (데이터 전송 없음)
-  const getData = useCallback(() => {
-    if(!user?.email) {
-      return null;
-    }
-    return {
-      action: "status",
-      data: {
-        tutorEmail: user.tutorEmail,
-        studentEmail: user.email,
-        status: "active",
-        room: "no room",  // 홈은 "no room"
-        assignedAt: new Date().toISOString().split("T")[0],
-      }
-    };
-  },[user?.email]);
-
-  const socket = useWebSocket(getData, {
-    sendImmediately: true,
-    enableInterval: true,
-    interval: 5000,
-    onMessage: handleWebSocketMessage  // 메시지 핸들러 추가
-  });
 
   const formatTimeSec = (sec) => {
     const m = Math.floor(sec / 60);
