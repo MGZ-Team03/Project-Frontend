@@ -47,10 +47,10 @@ const initialDailyStats = {
   avgResponseQuality: 0,
   avgResponseLatency: 0, // AI 응답 평균 지연 시간 (ms)
 
-  // 상세 기록 (분석용)
-  paceRatios: [],
-  responseQualities: [],
-  responseLatencies: [], // AI 응답 지연 시간 배열 (ms)
+  // 누적 평균 계산용 카운터 (메모리 누수 방지)
+  paceRatioCount: 0,
+  responseQualityCount: 0,
+  responseLatencyCount: 0
 };
 
 const initialState = {
@@ -169,16 +169,20 @@ const speakingStatsSlice = createSlice({
       state.dailyStats.totalSpeakingTime += session.userSpeakingTime;
       state.dailyStats.sessionsCount += 1;
 
-      // Pace Ratio 누적
+      // Pace Ratio 누적 평균 계산 (메모리 누수 방지)
       if (session.practiceRecords.length > 0) {
         state.dailyStats.practiceCount += session.practiceRecords.length;
+
+        // 누적 평균 방식으로 계산
         session.practiceRecords.forEach((record) => {
-          state.dailyStats.paceRatios.push(record.paceRatio);
+          const currentCount = state.dailyStats.paceRatioCount;
+          const currentAvg = state.dailyStats.avgPaceRatio;
+
+          // 새로운 평균 = (이전평균 × 이전개수 + 새값) / (이전개수 + 1)
+          state.dailyStats.avgPaceRatio =
+            (currentAvg * currentCount + record.paceRatio) / (currentCount + 1);
+          state.dailyStats.paceRatioCount = currentCount + 1;
         });
-        // 평균 재계산
-        const allRatios = state.dailyStats.paceRatios;
-        state.dailyStats.avgPaceRatio =
-          allRatios.reduce((a, b) => a + b, 0) / allRatios.length;
       }
       // Response Quality는 addResponseQuality에서 일별 통계를 실시간 누적하므로 여기서는 누적하지 않음
 
@@ -230,16 +234,16 @@ const speakingStatsSlice = createSlice({
         };
         state.currentSession.responseQualities.push(record);
 
-        // 일별 통계도 실시간 누적 + 평균 재계산
+        // 일별 통계 누적 평균 계산 (메모리 누수 방지)
         if (!state.dailyStats.date) state.dailyStats.date = getTodayKey();
-        if (!Array.isArray(state.dailyStats.responseQualities)) state.dailyStats.responseQualities = [];
-        state.dailyStats.responseQualities.push(record);
 
-        const allQualities = state.dailyStats.responseQualities;
+        const currentCount = state.dailyStats.responseQualityCount;
+        const currentAvg = state.dailyStats.avgResponseQuality;
+
+        // 새로운 평균 = (이전평균 × 이전개수 + 새값) / (이전개수 + 1)
         state.dailyStats.avgResponseQuality =
-          allQualities.length > 0
-            ? (allQualities.reduce((a, b) => a + (b?.overallScore || 0), 0) / allQualities.length)
-            : 0;
+          (currentAvg * currentCount + overallScore) / (currentCount + 1);
+        state.dailyStats.responseQualityCount = currentCount + 1;
       }
     },
 
@@ -257,16 +261,15 @@ const speakingStatsSlice = createSlice({
 
       if (state.currentSession.sessionType === 'chat' && latencyMs > 0) {
         if (!state.dailyStats.date) state.dailyStats.date = getTodayKey();
-        if (!Array.isArray(state.dailyStats.responseLatencies)) state.dailyStats.responseLatencies = [];
 
-        state.dailyStats.responseLatencies.push(latencyMs);
+        // 누적 평균 계산 (메모리 누수 방지)
+        const currentCount = state.dailyStats.responseLatencyCount;
+        const currentAvg = state.dailyStats.avgResponseLatency;
 
-        // 평균 재계산
-        const allLatencies = state.dailyStats.responseLatencies;
+        // 새로운 평균 = (이전평균 × 이전개수 + 새값) / (이전개수 + 1)
         state.dailyStats.avgResponseLatency =
-          allLatencies.length > 0
-            ? (allLatencies.reduce((a, b) => a + b, 0) / allLatencies.length)
-            : 0;
+          (currentAvg * currentCount + latencyMs) / (currentCount + 1);
+        state.dailyStats.responseLatencyCount = currentCount + 1;
       }
     },
 
