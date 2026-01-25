@@ -41,13 +41,14 @@ export async function extractVADSegments(audioBlob, segments) {
       const segmentLength = Math.max(0, endSample - startSample);
       if (segmentLength <= 0) continue;
 
+      let copyLen = 0;
       for (let channel = 0; channel < numberOfChannels; channel++) {
         const inputData = audioBuffer.getChannelData(channel);
         const outputData = newBuffer.getChannelData(channel);
 
         const srcStart = Math.max(0, Math.min(inputData.length, startSample));
         const srcEnd = Math.max(srcStart, Math.min(inputData.length, endSample));
-        const copyLen = Math.min(segmentLength, outputData.length - outputOffset, srcEnd - srcStart);
+        copyLen = Math.min(segmentLength, outputData.length - outputOffset, srcEnd - srcStart);
         if (copyLen <= 0) continue;
 
         outputData.set(inputData.subarray(srcStart, srcStart + copyLen), outputOffset);
