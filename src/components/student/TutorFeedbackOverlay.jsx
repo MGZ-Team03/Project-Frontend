@@ -47,7 +47,7 @@ export default function TutorFeedbackOverlay() {
   // WebSocket 연결 상태
   const [isConnected, setIsConnected] = useState(false);
   const [wsError, setWsError] = useState(null);
-  
+
   const [feedbacks, setFeedbacks] = useState([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -77,12 +77,12 @@ export default function TutorFeedbackOverlay() {
       setUnreadCount((prev) => prev + 1);
       
       // 방해금지 모드일 때는 알림/확장/TTS 모두 건너뜀
-      if (dnd) {
+      if (doNotDisturb) {
         return;
       }
             
       // 자동 패널 확장 (설정에 따라)
-      if (expand) {
+      if (autoExpand) {
         setIsExpanded(true);
       }
             
@@ -108,8 +108,8 @@ export default function TutorFeedbackOverlay() {
       }
       
       // TTS 자동 재생 (설정에 따라)
-      const isTTS = message.messageType === 'tts' || message.message_type === 'tts';
-      if (tts && isTTS && message.message) {
+      const isTTS = message.messageType === 'tts';
+      if (autoPlayTTS && isTTS && message.message) {
         // audio_url이 있으면 우선 사용, 없으면 브라우저 TTS
         if (message.audio_url) {
           const audio = new Audio(message.audio_url);
@@ -130,7 +130,7 @@ export default function TutorFeedbackOverlay() {
         fullMessage: message,
       });
     }
-  }, [autoExpand, autoPlayTTS, playText]);
+  }, [doNotDisturb, autoExpand, autoPlayTTS, playText]);
 
   // WebSocket 연결 (Singleton 사용)
   useEffect(() => {
@@ -157,7 +157,7 @@ export default function TutorFeedbackOverlay() {
       unsubscribe(); // 리스너만 제거, 연결은 유지
       clearInterval(statusInterval);
     };
-  }, [user?.email]);
+  }, [user?.email, handleWebSocketMessage]);
 
   // 브라우저 알림 권한 요청
   useEffect(() => {

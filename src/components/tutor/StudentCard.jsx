@@ -137,7 +137,7 @@ export default function StudentCard({
                 size="small"
                 color="secondary"
                 onClick={(e) => onFeedbackClick(student, e)}
-                disabled={disabled}
+                disabled={disabled || student.status === 'inactive'}
               >
                 <Message fontSize="small" />
               </IconButton>

@@ -30,24 +30,30 @@ class WebSocketSingleton {
     }
 
     connect() {
+        console.log("[WS] connect() 호출");
+        
         // 오프라인 체크
         try {
             if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                console.log("[WS] 오프라인 상태 - 연결 중단");
                 return null;
             }
         } catch (_) {}
 
         // 재연결 중이면 중복 시도 방지
         if (this.isReconnecting) {
+            console.log("[WS] 재연결 중 - 기존 소켓 반환");
             return this.socket;
         }
 
         // Redux에서 사용자 이메일 가져오기
         const state = _store?.getState();
         const userEmail = state?.auth?.user?.email;
+        console.log("[WS] userEmail:", userEmail);
 
         // userEmail이 없으면 연결하지 않음
         if (!userEmail) {
+            console.log("[WS] userEmail 없음 - 연결 중단");
             return null;
         }
 
@@ -55,16 +61,19 @@ class WebSocketSingleton {
         if (this.socket &&
             (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) &&
             this.connectedUserEmail === userEmail) {
+            console.log("[WS] 이미 연결됨 - 기존 소켓 반환, readyState:", this.socket.readyState);
             return this.socket;
         }
 
         // 기존 연결이 열려있으면 닫기
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            console.log("[WS] 기존 연결 닫기");
             this.socket.close();
         }
 
         // user_email 쿼리 파라미터로 연결
         const wsUrl = `${WS_URL}?user_email=${encodeURIComponent(userEmail)}`;
+        console.log("[WS] 연결 시도:", wsUrl);
         this.socket = new WebSocket(wsUrl);
         this.connectedUserEmail = userEmail;
         this._setupListeners();
@@ -109,6 +118,7 @@ class WebSocketSingleton {
 
     _setupListeners() {
         this.socket.onopen = () => {
+            console.log("[WS] ✅ 연결 성공!");
             this.isReconnecting = false;
             if (this.reconnectTimeout) {
                 clearTimeout(this.reconnectTimeout);
@@ -117,29 +127,34 @@ class WebSocketSingleton {
         };
 
         this.socket.onmessage = (event) => {
+            console.log("[WS] 📩 메시지 수신:", event.data);
             try {
                 const data = JSON.parse(event.data);
+                console.log("[WS] 파싱된 데이터:", data);
+                console.log("[WS] 등록된 리스너 수:", this.messageListeners.size);
                 this.messageListeners.forEach(listener => {
                     try {
                         listener(data);
                     } catch (err) {
-                        console.error("WebSocket 리스너 오류:", err);
+                        console.error("[WS] 리스너 오류:", err);
                     }
                 });
             } catch (err) {
-                console.error("WebSocket 메시지 파싱 오류:", err);
+                console.error("[WS] 메시지 파싱 오류:", err);
             }
         };
 
         this.socket.onerror = (error) => {
-            console.error("WebSocket 에러:", error);
+            console.error("[WS] ❌ 에러:", error);
         };
 
-        this.socket.onclose = () => {
+        this.socket.onclose = (event) => {
+            console.log("[WS] 🔌 연결 종료 - code:", event.code, "reason:", event.reason);
             this.connectedUserEmail = null;
 
             // 5초 후 재연결 시도
             if (!this.isReconnecting && !this.reconnectTimeout) {
+                console.log("[WS] 5초 후 재연결 예정...");
                 this.isReconnecting = true;
                 this.reconnectTimeout = setTimeout(() => {
                     this.isReconnecting = false;
