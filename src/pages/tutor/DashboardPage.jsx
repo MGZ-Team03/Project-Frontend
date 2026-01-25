@@ -117,6 +117,7 @@ import QuickFeedbackChips from '../../components/tutor/QuickFeedbackChips';
 import { sendFeedback } from '../../api/tutorFeedback';
 import NotificationDialog from '../../components/tutor/NotificationDialog';
 import { getNotifications } from '../../api/notifications';
+import {getDashboard} from "../../api/useDashboardData.js";
 // import {WS_URL} from "../../utils/constants.js";
 
 // 목업 학생 데이터
@@ -297,11 +298,14 @@ export default function DashboardPage() {
   const [wsStatus, setWsStatus] = useState('connecting');
   const [lastUpdate, setLastUpdate] = useState(null);
   const user = useSelector(state => state.auth.user);
+  const [dashData, setDashData] = useState([]);
 
   // 알림 관련 state
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+
+
 
   // 알림 목록 가져오기
   const fetchNotifications = async () => {
@@ -343,65 +347,6 @@ export default function DashboardPage() {
       return () => clearInterval(interval);
     }
   }, [user?.role]);
-
-  console.log("user auth : " + JSON.stringify(user));
-  useEffect(() => {
-
-    console.log('🔌 WebSocket 연결 시도:', WS_URL);
-    const ws = new WebSocket(WS_URL);
-
-    ws.onopen = () => {
-      console.log('✅ WebSocket 연결 성공');
-      setWsStatus('connected');
-
-      const authMessage = {
-        action: "dashboard",
-        name: user.name,
-        tutorEmail: user.email,
-      };
-      if(user.role === "tutor"){
-        console.log("auth:",authMessage)
-        console.log('📤 인증 메시지 전송:', authMessage);
-        ws.send(JSON.stringify(authMessage));
-        setWsStatus('connected');
-      }
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        console.log('📊 대시보드 업데이트 수신!:', message);
-
-        if (message.type === 'dashboard_update') {
-          setStudents(message.students || []);
-          setSummary(message.summary || { total: 0, active: 0, speaking: 0, warning: 0 });
-          setLastUpdate(new Date(message.timestamp));
-
-          console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
-        }
-
-      } catch (error) {
-        console.error('❌ 메시지 파싱 에러:', error);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('❌ WebSocket 에러:', error);
-      setWsStatus('disconnected');
-    };
-
-    ws.onclose = () => {
-      console.log('🔌 WebSocket 연결 종료');
-      setWsStatus('disconnected');
-    };
-
-    return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    };
-  }, []);
-
   // 세션 ID 생성 함수
   const generateSessionId = (studentEmail) => {
     const timestamp = Date.now();
@@ -417,59 +362,9 @@ export default function DashboardPage() {
   // const [summary, setSummary] = useState({ total: 0, active: 0, speaking: 0, warning: 0 });
   // const [wsStatus, setWsStatus] = useState('connecting');
   // const [lastUpdate, setLastUpdate] = useState(null);
-
-
   const handleStudentClick = (email) => {
     navigate(`/tutor/students/${email}`);
   };
-
-  useEffect(() => {
-
-    console.log('🔌 WebSocket 연결 시도:', WS_URL);
-    const ws = new WebSocket(WS_URL);
-
-    ws.onopen = () => {
-      console.log('✅ WebSocket 연결 성공');
-      setWsStatus('connected');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        console.log('📊 대시보드 업데이트 수신!:', message);
-
-        if (message.type === 'dashboard_update') {
-          setStudents(message.students || []);
-          setSummary(message.summary || { total: 0, active: 0, speaking: 0, warning: 0 });
-          setLastUpdate(new Date(message.timestamp));
-
-          console.log('✅ 대시보드 업데이트 완료:', message.students?.length, '명');
-        }
-
-      } catch (error) {
-        console.error('❌ 메시지 파싱 에러:', error);
-      }
-
-      ws.onerror = (error) => {
-        console.error('❌ WebSocket 에러:', error);
-        setWsStatus('disconnected');
-      };
-
-      ws.onclose = () => {
-        console.log('🔌 WebSocket 연결 종료');
-        setWsStatus('disconnected');
-      };
-
-      return () => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.close();
-        }
-      };
-    };
-
-
-  },[]);
-
   // 피드백 다이얼로그 열기
   const openFeedbackDialog = (student, event) => {
     event?.stopPropagation();
@@ -525,6 +420,33 @@ export default function DashboardPage() {
     }
   };
 
+  useEffect(() => {
+    if (!user?.email) return;
+
+    const fetchData = async () => {
+      try {
+        const data = await getDashboard(user.email);
+        console.log("🟢get dash " + data);
+        // 데이터 처리
+        setStudents(data.students);
+        setSummary(data.summary);
+        console.log("✅ get dashboard")
+
+      } catch (error) {
+        console.error("get dash",error);
+      }
+    };
+    if (user?.email){
+      fetchData();
+    }
+
+    const interval = setInterval(fetchData, 60 * 1000);
+
+    return () =>{
+      clearInterval(interval);
+    }
+
+  },[user.email]);
 
 
   return (
