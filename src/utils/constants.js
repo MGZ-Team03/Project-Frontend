@@ -1,6 +1,12 @@
 // API 및 WebSocket URL
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://xxx.execute-api.ap-northeast-2.amazonaws.com/prod';
-export const WS_URL = import.meta.env.VITE_WS_URL || 'wss://xxx.execute-api.ap-northeast-2.amazonaws.com/prod';
+export const API_BASE_URL =
+  import.meta.env.VITE_API_URL || 'https://xxx.execute-api.ap-northeast-2.amazonaws.com/prod';
+export const WS_URL =
+  import.meta.env.VITE_WS_URL || 'wss://xxx.execute-api.ap-northeast-2.amazonaws.com/prod';
+
+// Static assets (CloudFront)
+export const CLOUDFRONT_URL =
+  import.meta.env.VITE_CLOUDFRONT_URL || 'https://d2zczzecj3n92n.cloudfront.net';
 
 // Cognito 설정
 export const COGNITO_CONFIG = {

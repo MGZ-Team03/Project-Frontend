@@ -1,52 +1,8 @@
-import {useState, useRef, useEffect, useCallback} from 'react';
-import { useLocation, useNavigate} from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import {
-  Box,
-  Typography,
-  Button,
-  Card,
-  CardContent,
-  Stack,
-  TextField,
-  Avatar,
-  Chip,
-  IconButton,
-  List,
-  ListItem,
-  ListItemAvatar,
-  ListItemText,
-  Paper,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Snackbar,
-  Alert,
-  CircularProgress,
-  LinearProgress,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-} from '@mui/material';
-import {
-  VolumeUp,
-  Mic,
-  MicOff,
-  SmartToy,
-  Person,
-  Send,
-  Visibility,
-  VisibilityOff,
-  GridOn,
-  Notifications,
-  Feedback,
-  LightbulbOutlined,
-  Close,
-  GraphicEq,
-} from '@mui/icons-material';
 import StudentLayout from '../../components/common/StudentLayout';
+import FloatingCameraPreview from '../../components/common/FloatingCameraPreview';
 import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
 
 // Hooks
@@ -57,8 +13,6 @@ import { startAiChat, sendAiChatMessage } from '../../api/aiChat';
 import { getRecommendedSentences, getSentenceFeedback } from '../../api/sentences';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
-import { useTTS } from '../../hooks/conversation/useTTS';
-import { useSpeechRecognition } from '../../hooks/conversation/useSpeechRecognition';
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
 import { extractVADSegments } from '../../utils/audioTrimmer';
 import { createPcmRecorder } from '../../utils/pcmRecorder';
@@ -67,7 +21,7 @@ import { calculateResponseQuality } from '../../utils/conversation/responseQuali
 
 
 // Data
-import { scenarios, getScenarioById } from '../../data/conversation/scenarios';
+import { getScenarioById } from '../../data/conversation/scenarios';
 
 // Redux
 import {
@@ -76,6 +30,8 @@ import {
   updateRecordingTime,
   updateSpeakingTime,
   addResponseQuality,
+  incrementChatTurn,
+  addResponseLatency,
 } from '../../store/slices/speakingStatsSlice';
 import {
   selectDailyAvgNetSpeakingDensity,
@@ -84,8 +40,81 @@ import {
   getNetSpeakingDensityFeedback,
   getResponseQualityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
- 
+// import {useStudentStatus} from "../../api/useStudentStatus.js";
 // server-backed chat + TTS
+
+function clsx(...parts) {
+  return parts.filter(Boolean).join(' ');
+}
+
+function Banner({ tone = 'info', title, children }) {
+  const styles =
+    tone === 'error'
+      ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'
+      : tone === 'warning'
+        ? 'border-yellow-200 bg-yellow-50 text-yellow-900 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200'
+        : 'border-primary/20 bg-primary/10 text-[#111418] dark:text-white';
+
+  return (
+    <div className={clsx('rounded-xl border px-4 py-3', styles)}>
+      {title ? <p className="text-sm font-bold">{title}</p> : null}
+      {children ? <div className={title ? 'mt-1' : ''}>{children}</div> : null}
+    </div>
+  );
+}
+
+function IconPillButton({ icon, label, onClick, disabled, title, className }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title || label}
+      className={clsx(
+        'flex items-center justify-center rounded-full size-12 bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+        className
+      )}
+    >
+      <span className="material-symbols-outlined">{icon}</span>
+    </button>
+  );
+}
+
+function ProgressRing({ valuePercent }) {
+  const size = 84;
+  const stroke = 6;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, valuePercent || 0));
+  const dash = (pct / 100) * c;
+  const color = pct >= 80 ? 'text-red-500' : 'text-primary';
+
+  return (
+    <svg width={size} height={size} className="absolute inset-0">
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="transparent"
+        stroke="currentColor"
+        strokeWidth={stroke}
+        className="text-gray-200 dark:text-white/10"
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="transparent"
+        stroke="currentColor"
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        strokeDasharray={`${dash} ${c - dash}`}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        className={color}
+      />
+    </svg>
+  );
+}
 
 export default function ChatPage() {
   const location = useLocation();
@@ -97,6 +126,8 @@ export default function ChatPage() {
   const netDensity = useSelector(selectDailyAvgNetSpeakingDensity);
   const lastQuality = useSelector(selectLastResponseQuality);
   const avgQuality = useSelector(selectDailyAvgResponseQuality);
+  const dailyStats = useSelector(state => state.speakingStats.dailyStats);
+  const userEmail = useSelector(state => state.auth.user?.email);
 
   // Refs
   const videoRef = useRef(null);
@@ -115,6 +146,11 @@ export default function ChatPage() {
   const whisperStartedAtRef = useRef(null);
   const [micStream, setMicStream] = useState(null);
   const pcmRecorderRef = useRef(null);
+
+  // Recording timer state (for 30-second limit)
+  const recordingStartTimeRef = useRef(null);
+  const recordingTimerRef = useRef(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
 
   // Get difficulty and scenario from navigation state
   const difficulty = location.state?.difficulty || '중';
@@ -145,10 +181,12 @@ export default function ChatPage() {
   const [showMouthLandmarks, setShowMouthLandmarks] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(null);
-  const [ setPermissionError] = useState(null);
+  const [permissionError, setPermissionError] = useState(null);
   const [isChatInitLoading, setIsChatInitLoading] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sttError, setSttError] = useState(null);
+
+  // useStudentStatus(user, location);
 
   // Hooks - MediaPipe
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
@@ -198,18 +236,21 @@ export default function ChatPage() {
   const [aiError, setAiError] = useState(null);
   const [isAILoading, setIsAILoading] = useState(false);
 
+  // onTick 콜백을 useCallback으로 메모이제이션 (메모리 누수 방지)
+  const handleSpeechTick = useCallback(({ deltaMs, isSpeaking: speaking }) => {
+    // 녹음 시간 누적
+    dispatch(updateRecordingTime({ deltaTime: deltaMs }));
+    // 발화 시간 누적
+    dispatch(updateSpeakingTime({ deltaTime: deltaMs, isSpeaking: speaking }));
+  }, [dispatch]);
+
   // 실제 발화시간(VAD/MAR) 트래킹: Whisper 스트림 재사용
   const { speakingMsRef, finalizeVadSegments } = useSpeechActivityTracker({
     enabled: isWhisperRecording,
     stream: micStream,
     landmarksRef,
     isTtsPlaying: isSpeaking,
-    onTick: ({ deltaMs, isSpeaking: speaking }) => {
-      // 녹음 시간 누적
-      dispatch(updateRecordingTime({ deltaTime: deltaMs }));
-      // 발화 시간 누적
-      dispatch(updateSpeakingTime({ deltaTime: deltaMs, isSpeaking: speaking }));
-    },
+    onTick: handleSpeechTick,
   });
 
   const [lastRecordedAudioUrl, setLastRecordedAudioUrl] = useState(null);
@@ -260,22 +301,41 @@ export default function ChatPage() {
   // Camera permission
   useEffect(() => {
     let cancelled = false;
+    const stopStream = () => {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => {
+          try {
+            track.enabled = false;
+          } catch (_) {}
+          try {
+            track.stop();
+          } catch (_) {}
+        });
+        cameraStreamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+
     const requestCamera = async () => {
       try {
+        setPermissionError(null);
+        setHasCameraPermission(null);
+
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (cancelled) {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
         cameraStreamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
+        if (videoRef.current) videoRef.current.srcObject = stream;
         setHasCameraPermission(true);
       } catch (err) {
         console.error('Camera permission error:', err);
-        setPermissionError(err.message);
+        setPermissionError(err?.message || '카메라 권한을 확인해주세요.');
         setHasCameraPermission(false);
+        stopStream();
       }
     };
 
@@ -283,13 +343,7 @@ export default function ChatPage() {
 
     return () => {
       cancelled = true;
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
-        cameraStreamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
+      stopStream();
     };
   }, []);
 
@@ -299,6 +353,11 @@ export default function ChatPage() {
       if (stopDebounceTimerRef.current) {
         clearTimeout(stopDebounceTimerRef.current);
         stopDebounceTimerRef.current = null;
+      }
+      // Recording timer cleanup
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
       }
     };
   }, []);
@@ -328,6 +387,9 @@ export default function ChatPage() {
       initialMessageSentRef.current = false;
     };
   }, [currentScenario]);
+
+  // Recording duration limit (30 seconds)
+  const MAX_RECORDING_DURATION = 30 * 1000;
 
   // Auto scroll to bottom
   useEffect(() => {
@@ -460,6 +522,22 @@ export default function ChatPage() {
 
       whisperChunksRef.current = [];
       whisperStartedAtRef.current = Date.now();
+
+      // Initialize recording timer for 30-second limit
+      recordingStartTimeRef.current = Date.now();
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        const elapsed = Date.now() - recordingStartTimeRef.current;
+        setRecordingDuration(elapsed);
+        if (elapsed >= MAX_RECORDING_DURATION) {
+          try {
+            whisperRecorderRef.current?.stop?.();
+          } catch (_) {
+            // ignore
+          }
+        }
+      }, 100);
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -537,6 +615,13 @@ export default function ChatPage() {
         setMicStream(null);
         whisperRecorderRef.current = null;
         setIsWhisperRecording(false);
+
+        // Clear recording timer
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current);
+          recordingTimerRef.current = null;
+        }
+        setRecordingDuration(0);
 
         const durationMs = Math.max(0, Date.now() - (whisperStartedAtRef.current || Date.now()));
         const speakingMs = Math.max(0, speakingMsRef.current || 0);
@@ -623,6 +708,12 @@ export default function ChatPage() {
     setInputText('');
     setCurrentSpeakingTime(0);
 
+    // Chat turn 증가 (사용자 메시지 전송 시)
+    dispatch(incrementChatTurn());
+
+    // AI 응답 지연 측정 시작
+    const requestStartTime = Date.now();
+
     try {
       setAiError(null);
       setIsAILoading(true);
@@ -637,6 +728,11 @@ export default function ChatPage() {
         conversationId: conversationIdRef.current,
         userMessage: messageToSend,
       });
+
+      // AI 응답 지연 시간 계산 및 기록
+      const responseLatency = Date.now() - requestStartTime;
+      dispatch(addResponseLatency({ latencyMs: responseLatency }));
+      console.log(`[ChatPage] AI response latency: ${responseLatency}ms`);
 
       const assistantText = res?.aiMessage || res?.assistantMessage || res?.message || res?.content || '';
 
@@ -661,6 +757,8 @@ export default function ChatPage() {
         }
         return next;
       });
+
+      // 백엔드 저장은 세션 종료 시 POST /api/sessions/end를 통해 자동으로 이루어집니다.
 
       // auto TTS
       if (assistantText) {
@@ -691,598 +789,693 @@ export default function ChatPage() {
   };
 
   // Play AI message with TTS
-  const handlePlayAIMessage = (content) => {
+  const handlePlayAIMessage = useCallback((content) => {
     if (!content) return;
     stopTTS();
     playText(content);
-  };
+  }, [stopTTS, playText]);
 
   // Reveal AI message
-  const handleRevealMessage = (index) => {
+  const handleRevealMessage = useCallback((index) => {
     setRevealedMessages(prev => {
       const newSet = new Set(prev);
       newSet.add(index);
       return newSet;
     });
-  };
+  }, []);
 
   const formatTime = (ms) => {
-    const seconds = Math.floor(ms / 1000);
-    return `${seconds}초`;
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+    const s = String(totalSec % 60).padStart(2, '0');
+    return `${m}:${s}`;
   };
 
-  const scenario = getScenarioById(currentScenario);
   const isRecordingNow = isWhisperRecording;
 
+  const canRecord =
+    !conversationEnded &&
+    !isAILoading &&
+    !isTranscribing &&
+    !!conversationIdRef.current &&
+    whisperStatus === 'ready';
+
+  const sessionHeader = useMemo(() => {
+    return (
+      <header
+        data-session-header="true"
+        className="flex items-center justify-between border-b border-solid border-b-[#f0f2f4] dark:border-b-white/10 bg-white dark:bg-background-dark px-4 md:px-8 py-3 shrink-0"
+      >
+        <div className="flex items-center gap-4 px-4 md:px-6 py-2 bg-gray-50 dark:bg-white/5 rounded-full border border-gray-100 dark:border-white/10 mx-auto lg:mx-0">
+          <div className="flex items-center gap-2">
+            <span className="size-2 bg-red-500 rounded-full animate-pulse"></span>
+            <p className="text-sm font-semibold text-gray-600 dark:text-gray-300">Live Session</p>
+          </div>
+          <div className="w-px h-4 bg-gray-200 dark:bg-white/10"></div>
+          <p className="text-sm font-bold text-[#111418] dark:text-white">
+            {getScenarioById(currentScenario)?.title || 'AI Conversation'}
+          </p>
+          <div className="w-px h-4 bg-gray-200 dark:bg-white/10"></div>
+          <div className="flex items-center gap-2 text-primary font-bold">
+            <span className="material-symbols-outlined text-sm">timer</span>
+            <p className="text-sm uppercase tracking-wider">{formatTime(totalTimeMs)}</p>
+          </div>
+        </div>
+
+        <div className="hidden lg:flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-tighter">Difficulty</span>
+            <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-black bg-primary/10 text-primary border border-primary/20">
+              {difficulty}
+            </span>
+          </div>
+        </div>
+      </header>
+    );
+  }, [currentScenario, difficulty, totalTimeMs]);
+
+  const lastUserIdx = useMemo(() => {
+    return messages.reduce(
+      (acc, m, i) => (m?.role === 'user' && !String(m?.content || '').startsWith('🎤') ? i : acc),
+      -1
+    );
+  }, [messages]);
+
+  const handleEndSession = useCallback(() => {
+    try {
+      stopTTS();
+    } catch (_) {}
+    try {
+      whisperRecorderRef.current?.stop?.();
+    } catch (_) {}
+    try {
+      replayAudioRef.current?.pause?.();
+    } catch (_) {}
+    navigate('/home');
+  }, [navigate, stopTTS]);
+
+  const micProgressPct = isRecordingNow ? (recordingDuration / MAX_RECORDING_DURATION) * 100 : 0;
+
+  const placeholderText = useMemo(() => {
+    if (conversationEnded) return '대화가 종료되었습니다';
+    if (isRecordingNow) return '녹음 중... (다시 누르면 종료 후 인식)';
+    if (isTranscribing) return '음성 인식 중...';
+    return '메시지를 입력하거나 마이크를 사용하세요';
+  }, [conversationEnded, isRecordingNow, isTranscribing]);
+
+  const showComposerDisabled =
+    conversationEnded || isRecordingNow || isTranscribing || isAILoading || !conversationIdRef.current;
+
   return (
-    <StudentLayout todayTime={Math.floor(totalTimeMs / 1000 / 60)}>
-      <Box sx={{ maxWidth: 1400, mx: 'auto', width: '100%', height: 'calc(100vh - 200px)' }}>
-        {/* Permission Error */}
-        {hasCameraPermission === false && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            카메라 권한이 필요합니다. 브라우저 설정에서 권한을 허용해주세요.
-          </Alert>
-        )}
+    <StudentLayout
+      mode="session"
+      sessionHeader={sessionHeader}
+      todayTime={Math.floor(totalTimeMs / 1000 / 60)}
+    >
+      <div className="-mx-4 -my-8 flex h-full min-h-[calc(100vh-140px)]">
+        <main className="relative flex flex-1 overflow-hidden">
+          <section className="relative flex-[7] flex flex-col bg-white dark:bg-background-dark border-r border-[#e5e7eb] dark:border-white/10 overflow-hidden">
+            <div className="px-4 md:px-8 pt-6 space-y-3">
+              {aiError ? (
+                <Banner tone="error" title="AI 응답 오류">
+                  <p className="text-sm opacity-90">{aiError?.message || String(aiError)}</p>
+                </Banner>
+              ) : null}
 
-        {/* MediaPipe Loading */}
-        {!isModelLoaded && hasCameraPermission && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <CircularProgress size={20} sx={{ mr: 1 }} />
-            얼굴 인식 모델 로딩 중...
-          </Alert>
-        )}
+              {isChatInitLoading ? (
+                <Banner title="대화 준비 중...">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block size-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                    <p className="text-sm font-semibold text-[#111418] dark:text-white">잠시만 기다려주세요.</p>
+                  </div>
+                </Banner>
+              ) : null}
 
-        {/* AI Error */}
-        {aiError && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            AI 응답 오류: {aiError.message || String(aiError)}
-          </Alert>
-        )}
+              {isTranscribing ? (
+                <Banner title="음성 인식 중...">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block size-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                    <p className="text-sm font-semibold text-[#111418] dark:text-white">녹음 결과를 텍스트로 변환하고 있어요.</p>
+                  </div>
+                </Banner>
+              ) : null}
 
-        {isChatInitLoading && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <CircularProgress size={20} sx={{ mr: 1 }} />
-            대화 준비 중...
-          </Alert>
-        )}
+              {sttError || whisperError ? (
+                <Banner tone="warning" title="STT 오류">
+                  <p className="text-sm opacity-90">{sttError || whisperError}</p>
+                </Banner>
+              ) : null}
 
-        {/* STT 상태 - 모델 로딩은 StudentLayout 배너에서 표시 */}
-        {isTranscribing && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <CircularProgress size={16} sx={{ mr: 1 }} />
-            음성 인식 중...
-          </Alert>
-        )}
-        {(sttError || whisperError) && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            STT 오류: {sttError || whisperError}
-          </Alert>
-        )}
+              {ttsStatus === 'generating' ? (
+                <Banner title="오디오 생성 중...">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block size-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                    <p className="text-sm font-semibold text-[#111418] dark:text-white">TTS 오디오를 만들고 있어요.</p>
+                  </div>
+                </Banner>
+              ) : null}
+            </div>
 
+            <div className="px-4 md:px-8 py-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between bg-white/90 dark:bg-background-dark/90 backdrop-blur-md sticky top-0 z-10">
+              <div className="flex items-center gap-4">
+                <div className="relative">
+                  <div className="size-12 rounded-full bg-primary/10 flex items-center justify-center border-2 border-primary/20 overflow-hidden">
+                    <span className="material-symbols-outlined text-2xl text-primary">face_6</span>
+                  </div>
+                  <div className="absolute -bottom-0.5 -right-0.5 size-3.5 bg-green-500 rounded-full border-2 border-white dark:border-background-dark" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-[#111418] dark:text-white leading-none">AI Sarah</h3>
+                  <p className="text-xs text-primary font-medium mt-1 uppercase tracking-widest flex items-center gap-1">
+                    <span className={clsx('material-symbols-outlined text-[10px]', isSpeaking ? 'animate-pulse' : '')}>
+                      graphic_eq
+                    </span>
+                    {isSpeaking ? 'Speaking...' : 'Ready'}
+                  </p>
+                </div>
+              </div>
 
-        {/* TTS Generating */}
-        {ttsStatus === 'generating' && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <CircularProgress size={16} sx={{ mr: 1 }} />
-            오디오 생성 중...
-          </Alert>
-        )}
+              <div className="hidden md:flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-400 uppercase">Fluency</span>
+                <div className="w-32 bg-gray-100 dark:bg-white/10 h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-primary h-full w-[84%]" />
+                </div>
+                <span className="text-xs font-bold text-primary">84%</span>
+              </div>
+            </div>
 
-        {/* AI Loading */}
-        {isAILoading && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <CircularProgress size={16} sx={{ mr: 1 }} />
-            AI 응답 대기 중...
-          </Alert>
-        )}
+            <div className="flex-1 overflow-y-auto p-6 md:p-12 bg-gray-50/30 dark:bg-background-dark/30">
+              <div className="max-w-4xl mx-auto flex flex-col gap-10">
+                {messages.map((message, index) => {
+                  const role = message?.role;
+                  const content = String(message?.content || '');
+                  const isAssistant = role === 'assistant';
+                  const isUser = role === 'user';
+                  const isSystem = role === 'system';
+                  const isLast = index === messages.length - 1;
+                  const isBlurred = isAssistant && !message.streaming && !revealedMessages.has(index);
 
-        {/* Main Layout */}
-        <Stack direction="row" spacing={2} sx={{ height: '100%' }}>
-          {/* Left: Camera Area */}
-          <Box sx={{ flex: '0 0 400px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {/* Webcam Preview */}
-            <Card elevation={2}>
-              <CardContent>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    📹 웹캠
-                  </Typography>
-                  <Stack direction="row" spacing={0.5}>
-                    <IconButton size="small" onClick={() => setShowGrid((v) => !v)} title="그리드">
-                      <GridOn fontSize="small" color={showGrid ? 'primary' : 'inherit'} />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      onClick={() => setShowMouthLandmarks((v) => !v)}
-                      title="입 랜드마크"
+                  return (
+                    <div
+                      key={`${role}-${index}`}
+                      className={clsx(
+                        'flex gap-6',
+                        isUser ? 'justify-end' : 'justify-start',
+                        isSystem ? 'justify-center' : ''
+                      )}
                     >
-                      {showMouthLandmarks ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
-                  </IconButton>
-                  </Stack>
-                </Stack>
-                <Box
-                  sx={{
-                    position: 'relative',
-                    width: '100%',
-                    aspectRatio: '4/3',
-                    bgcolor: '#000',
-                    borderRadius: 2,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'cover',
-                    }}
-                  />
-                  <canvas
-                    ref={canvasRef}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      height: '100%',
-                    }}
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-
-
-            {/* Speaking Statistics */}
-            <Card elevation={2}>
-              <CardContent>
-                <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
-                  📊 통계
-                </Typography>
-                <Stack spacing={2}>
-                  {/* Response Quality */}
-                  <Box>
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
-                      응답 품질 (Response Quality)
-                    </Typography>
-                    <Stack direction="row" spacing={2}>
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                          {lastQuality ? `${lastQuality.overallScore}점` : '-'}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          마지막
-                        </Typography>
-                      </Box>
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                          {avgQuality ? `${avgQuality.toFixed(1)}점` : '-'}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          평균
-                        </Typography>
-                      </Box>
-                    </Stack>
-                    {lastQuality && (
-                      <Box sx={{ mt: 1 }}>
-                        <Chip
-                          label={getResponseQualityFeedback(lastQuality.overallScore).message}
-                          size="small"
-                          sx={{
-                            bgcolor: getResponseQualityFeedback(lastQuality.overallScore).color + '.100',
-                            color: getResponseQualityFeedback(lastQuality.overallScore).color + '.800',
-                          }}
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                          {lastQuality.wordCount}단어 · {lastQuality.wordsPerMinute.toFixed(0)} wpm · 유창성 {lastQuality.fluencyScore.toFixed(0)}%
-                        </Typography>
-                      </Box>
-                    )}
-                  </Box>
-
-                  {/* Net Speaking Density */}
-                  <Box>
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
-                      발화 밀도 (Net Speaking Density)
-                    </Typography>
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                      {netDensity != null && netDensity > 0 ? `${netDensity.toFixed(1)}%` : '-'}
-                    </Typography>
-                    {netDensity != null && netDensity > 0 && (
-                      <Chip
-                        label={getNetSpeakingDensityFeedback(netDensity).message}
-                        size="small"
-                        sx={{
-                          mt: 1,
-                          bgcolor: getNetSpeakingDensityFeedback(netDensity).color + '.100',
-                          color: getNetSpeakingDensityFeedback(netDensity).color + '.800',
-                        }}
-                      />
-                    )}
-                  </Box>
-                </Stack>
-              </CardContent>
-            </Card>
-          </Box>
-
-          {/* Right: Chat Area */}
-          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
-            {/* Header */}
-            <Card elevation={2}>
-              <CardContent>
-                <Stack direction="row" alignItems="center" spacing={2}>
-                  <Chip
-                    label={`주제: ${getScenarioById(currentScenario)?.title || '레스토랑 주문'}`}
-                    size="small"
-                    color="secondary"
-                  />
-                  <Chip label={`난이도: ${difficulty}`} size="small" color="primary" />
-                  <Box sx={{ flexGrow: 1 }} />
-                  <Typography variant="body2" color="text.secondary">
-                    총 대화 시간: {formatTime(totalTimeMs)}
-                  </Typography>
-                </Stack>
-              </CardContent>
-            </Card>
-
-            {/* Messages Area */}
-            <Card elevation={2} sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-              <CardContent sx={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-                <List>
-                  {messages.map((message, index) => (
-                    <ListItem
-                      key={index}
-                      alignItems="flex-start"
-                      sx={{
-                        flexDirection: message.role === 'user' ? 'row-reverse' : 'row',
-                        mb: 2,
-                      }}
-                    >
-                      <ListItemAvatar>
-                        <Avatar
-                          sx={{
-                            bgcolor:
-                              message.role === 'assistant'
-                                ? '#9C27B0'
-                                : message.role === 'user'
-                                  ? '#2196F3'
-                                  : '#607d8b',
-                          }}
+                      <div className={clsx('flex-1', isUser ? 'text-right max-w-[90%]' : 'max-w-[90%]')}>
+                        <span
+                          className={clsx(
+                            'text-[11px] font-bold uppercase tracking-widest mb-3 block',
+                            isUser ? 'text-primary' : 'text-gray-400'
+                          )}
                         >
-                          {message.role === 'assistant' ? <SmartToy /> : message.role === 'user' ? <Person /> : <Mic />}
-                        </Avatar>
-                      </ListItemAvatar>
-                      <ListItemText
-                        sx={{
-                          textAlign: message.role === 'user' ? 'right' : 'left',
-                          ml: message.role === 'user' ? 0 : 2,
-                          mr: message.role === 'user' ? 2 : 0,
-                        }}
-                        disableTypography
-                        primary={
-                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                            <Box
-                              sx={{
-                                bgcolor:
-                                  message.role === 'assistant'
-                                    ? '#f5f5f5'
-                                    : message.role === 'user'
-                                      ? '#e3f2fd'
-                                      : '#eceff1',
-                                p: 2,
-                                borderRadius: 2,
-                                display: 'inline-block',
-                                maxWidth: '80%',
-                                position: 'relative',
-                                cursor: message.role === 'assistant' && !revealedMessages.has(index) ? 'pointer' : 'default',
-                              }}
+                          {isUser ? 'You' : isAssistant ? 'Sarah' : 'System'}
+                        </span>
+
+                        <div className={clsx('relative inline-block', isUser ? 'text-right' : '')}>
+                          {isSystem ? (
+                            <div className="rounded-full px-4 py-2 bg-white/70 dark:bg-white/5 border border-gray-100 dark:border-white/10 text-xs font-bold text-gray-600 dark:text-gray-300">
+                              {content}
+                            </div>
+                          ) : (
+                            <div
+                              role={isAssistant ? 'button' : undefined}
+                              tabIndex={isAssistant ? 0 : undefined}
                               onClick={() => {
-                                if (message.role === 'assistant' && !revealedMessages.has(index) && !message.streaming) {
-                                  handleRevealMessage(index);
+                                if (isAssistant && isBlurred) handleRevealMessage(index);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  if (isAssistant && isBlurred) handleRevealMessage(index);
                                 }
                               }}
+                              className={clsx(
+                                'relative',
+                                isAssistant && index > 0
+                                  ? 'bg-primary/5 dark:bg-primary/10 p-6 md:p-8 rounded-3xl border-l-4 border-primary'
+                                  : '',
+                                isAssistant && isBlurred ? 'cursor-pointer' : ''
+                              )}
                             >
-                              <Typography
-                                variant="body1"
-                                sx={{
-                                  filter: message.role === 'assistant' && !revealedMessages.has(index) && !message.streaming
-                                    ? 'blur(5px)'
-                                    : 'none',
-                                  transition: 'filter 0.3s ease',
-                                }}
-                              >
-                                {message.content}
-                                {message.streaming && (
-                                  <CircularProgress size={16} sx={{ ml: 1, verticalAlign: 'middle' }} />
+                              <p
+                                className={clsx(
+                                  'text-2xl lg:text-3xl leading-relaxed',
+                                  isAssistant ? 'text-[#111418] dark:text-white font-light' : 'text-primary font-medium',
+                                  isBlurred ? 'blur-[6px] select-none' : ''
                                 )}
-                              </Typography>
-                              {message.role === 'assistant' && !revealedMessages.has(index) && !message.streaming && (
-                                <Box
-                                  sx={{
-                                    position: 'absolute',
-                                    top: '50%',
-                                    left: '50%',
-                                    transform: 'translate(-50%, -50%)',
-                                    bgcolor: 'rgba(0, 0, 0, 0.7)',
-                                    color: 'white',
-                                    px: 2,
-                                    py: 1,
-                                    borderRadius: 1,
-                                    fontSize: '0.875rem',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  클릭하여 보기
-                                </Box>
-                              )}
-                            </Box>
-
-                            {/* AI 메시지: 추천 문장 버튼 (스피커 왼쪽) + 스피커 버튼 */}
-                            {message.role === 'assistant' && !message.streaming && index === messages.length - 1 && (
-                              <IconButton
-                                size="small"
-                                onClick={generateSuggestedReplies}
-                                disabled={suggestLoading}
-                                title="답변 추천"
-                                sx={{ mt: 0.5 }}
                               >
-                                {suggestLoading ? (
-                                  <CircularProgress size={16} />
-                                ) : (
-                                  <LightbulbOutlined fontSize="small" />
-                                )}
-                              </IconButton>
-                            )}
+                                {content || (message.streaming ? '...' : '')}
+                              </p>
 
-                            {/* Always show speaker button for assistant (even when blurred) */}
-                            {message.role === 'assistant' && (
-                              <IconButton
-                                size="small"
-                                onClick={() => handlePlayAIMessage(message.content)}
-                                disabled={isSpeaking || message.streaming}
-                                title="TTS 재생"
-                                sx={{ mt: 0.5 }}
-                              >
-                                <VolumeUp fontSize="small" />
-                              </IconButton>
-                            )}
+                              {message.streaming ? (
+                                <div className="mt-4 flex gap-1.5">
+                                  <span className="size-2 bg-primary/40 rounded-full" />
+                                  <span className="size-2 bg-primary/40 rounded-full" />
+                                  <span className="size-2 bg-primary/40 rounded-full" />
+                                </div>
+                              ) : null}
 
-                            {/* 사용자 최신 메시지: 피드백 버튼 */}
-                            {(() => {
-                              // 마지막 사용자 메시지 인덱스 찾기 (🎤 제외)
-                              const lastUserIdx = messages.reduce((acc, m, i) =>
-                                m.role === 'user' && !m.content.startsWith('🎤') ? i : acc, -1);
-                              return message.role === 'user' &&
-                                !message.content.startsWith('🎤') &&
-                                index === lastUserIdx;
-                            })() && (
-                                <IconButton
-                                  size="small"
-                                  onClick={() => handleRequestFeedback(index, message.content)}
-                                  disabled={feedbackLoading[index] || !!messageFeedback[index]}
-                                  title="피드백 요청"
-                                  sx={{ mt: 0.5 }}
-                                >
-                                  {feedbackLoading[index] ? (
-                                    <CircularProgress size={16} />
-                                  ) : (
-                                    <Feedback fontSize="small" color={messageFeedback[index] ? 'disabled' : 'primary'} />
-                                  )}
-                                </IconButton>
-                              )}
+                              {isAssistant && isBlurred ? (
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                  <div className="bg-black/70 text-white px-3 py-1 rounded-full text-xs font-bold">
+                                    클릭하여 보기
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
 
-                            {message.role === 'user' && message.speakingTime && (
-                              <Chip
-                                label={`${message.speakingTime.toFixed(1)}초`}
-                                size="small"
-                                color="primary"
-                                sx={{ ml: 1 }}
-                              />
-                            )}
-                          </Box>
-                        }
-                        secondary={
-                          <>
-                            {/* 사용자 메시지: 피드백 결과 표시 */}
-                            {message.role === 'user' && messageFeedback[index] && (
-                              <Box sx={{ mt: 1, textAlign: 'right' }}>
-                                {messageFeedback[index].error ? (
-                                  <Alert severity="error" sx={{ textAlign: 'left' }}>
-                                    <Typography variant="caption">{messageFeedback[index].error}</Typography>
-                                  </Alert>
-                                ) : (
-                                  <Alert
-                                    severity="info"
-                                    sx={{
-                                      textAlign: 'left'
-                                    }}
+                        {!isSystem ? (
+                          <div className={clsx('mt-3 flex items-center gap-2', isUser ? 'justify-end' : 'justify-start')}>
+                            {isAssistant && !message.streaming ? (
+                              <>
+                                {isLast ? (
+                                  <button
+                                    type="button"
+                                    onClick={generateSuggestedReplies}
+                                    disabled={suggestLoading}
+                                    className="inline-flex items-center justify-center rounded-full size-10 bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+                                    title="답변 추천"
                                   >
-                                    {messageFeedback[index].correctedUserText && (
-                                      <Typography variant="caption" display="block" sx={{ mb: 0.5 }}>
-                                        <strong>교정:</strong> {messageFeedback[index].correctedUserText}
-                                      </Typography>
-                                    )}
-                                    {messageFeedback[index].feedback?.length > 0 && (
-                                      <Box sx={{ mb: 0.5 }}>
-                                        {messageFeedback[index].feedback.map((fb, i) => (
-                                          <Typography key={i} variant="caption" display="block">• {fb}</Typography>
-                                        ))}
-                                      </Box>
-                                    )}
-                                    {messageFeedback[index].suggestions?.length > 0 && (
-                                      <Box sx={{ mb: 0.5 }}>
-                                        <Typography variant="caption" display="block"><strong>대안 표현:</strong></Typography>
-                                        {messageFeedback[index].suggestions.map((sg, i) => (
-                                          <Chip
-                                            key={i}
-                                            label={sg}
-                                            size="small"
-                                            variant="outlined"
-                                            onClick={() => setInputText(sg)}
-                                            sx={{ cursor: 'pointer', mr: 0.5, mt: 0.5 }}
-                                          />
-                                        ))}
-                                      </Box>
-                                    )}
-                                    {messageFeedback[index].encouragement && (
-                                      <Typography variant="caption" color="success.main" display="block">
-                                        {messageFeedback[index].encouragement}
-                                      </Typography>
-                                    )}
-                                  </Alert>
-                                )}
-                              </Box>
+                                    <span className="material-symbols-outlined">
+                                      {suggestLoading ? 'progress_activity' : 'lightbulb'}
+                                    </span>
+                                  </button>
+                                ) : null}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handlePlayAIMessage(content)}
+                                  disabled={isSpeaking || message.streaming}
+                                  className="inline-flex items-center justify-center rounded-full size-10 bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+                                  title="TTS 재생"
+                                >
+                                  <span className="material-symbols-outlined">volume_up</span>
+                                </button>
+                              </>
+                            ) : null}
+
+                            {isUser && index === lastUserIdx && !content.startsWith('🎤') ? (
+                              <button
+                                type="button"
+                                onClick={() => handleRequestFeedback(index, content)}
+                                disabled={feedbackLoading[index] || !!messageFeedback[index]}
+                                className="inline-flex items-center justify-center rounded-full size-10 bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+                                title="피드백 요청"
+                              >
+                                <span className="material-symbols-outlined">
+                                  {feedbackLoading[index] ? 'progress_activity' : 'feedback'}
+                                </span>
+                              </button>
+                            ) : null}
+
+                            {isUser && message?.speakingTime ? (
+                              <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-black bg-primary/10 text-primary border border-primary/20">
+                                {Number(message.speakingTime).toFixed(1)}초
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {isUser && messageFeedback[index] ? (
+                          <div className="mt-4">
+                            {messageFeedback[index].error ? (
+                              <Banner tone="error" title="피드백 오류">
+                                <p className="text-sm opacity-90">{messageFeedback[index].error}</p>
+                              </Banner>
+                            ) : (
+                              <Banner title="피드백">
+                                {messageFeedback[index].correctedUserText ? (
+                                  <p className="text-sm font-semibold">
+                                    <span className="font-black">교정:</span> {messageFeedback[index].correctedUserText}
+                                  </p>
+                                ) : null}
+
+                                {Array.isArray(messageFeedback[index].feedback) && messageFeedback[index].feedback.length > 0 ? (
+                                  <div className="mt-2 space-y-1">
+                                    {messageFeedback[index].feedback.map((fb, i) => (
+                                      <p key={i} className="text-sm opacity-90">
+                                        - {fb}
+                                      </p>
+                                    ))}
+                                  </div>
+                                ) : null}
+
+                                {Array.isArray(messageFeedback[index].suggestions) &&
+                                messageFeedback[index].suggestions.length > 0 ? (
+                                  <div className="mt-3">
+                                    <p className="text-xs font-black uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                                      대안 표현
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {messageFeedback[index].suggestions.map((sg, i) => (
+                                        <button
+                                          key={i}
+                                          type="button"
+                                          onClick={() => setInputText(sg)}
+                                          className="rounded-full px-3 py-1.5 text-sm font-semibold border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 hover:border-primary/30 hover:text-primary transition"
+                                        >
+                                          {sg}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {messageFeedback[index].encouragement ? (
+                                  <p className="mt-3 text-sm font-bold text-green-600 dark:text-green-400">
+                                    {messageFeedback[index].encouragement}
+                                  </p>
+                                ) : null}
+                              </Banner>
                             )}
+                          </div>
+                        ) : null}
 
-                            {/* AI 메시지: 대화 종료 안내 (최신 메시지만) */}
-                            {message.role === 'assistant' &&
-                              !message.streaming &&
-                              index === messages.length - 1 &&
-                              conversationEnded && (
-                                <Box sx={{ mt: 1 }}>
-                                  <Alert severity="info" sx={{ textAlign: 'left' }}>
-                                    <Typography variant="body2" sx={{ mb: 1 }}>
-                                      대화가 종료되었습니다. 수고하셨습니다!
-                                    </Typography>
-                                    <Button
-                                      variant="outlined"
-                                      size="small"
-                                      onClick={() => navigate('/home')}
-                                    >
-                                      홈으로 돌아가기
-                                    </Button>
-                                  </Alert>
-                                </Box>
-                              )}
-                          </>
-                        }
-                      />
-                    </ListItem>
-                  ))}
-                  <div ref={messagesEndRef} />
-                </List>
-              </CardContent>
+                        {isAssistant && !message.streaming && isLast && conversationEnded ? (
+                          <div className="mt-4">
+                            <Banner title="대화가 종료되었습니다">
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-semibold opacity-90">수고하셨습니다!</p>
+                                <button
+                                  type="button"
+                                  onClick={() => navigate('/home')}
+                                  className="rounded-full px-4 py-2 text-sm font-bold border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 hover:border-primary/30 hover:text-primary transition"
+                                >
+                                  홈으로
+                                </button>
+                              </div>
+                            </Banner>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
 
-              {/* Input Area */}
-              <CardContent sx={{ borderTop: 1, borderColor: 'divider' }}>
-                {/* 추천 문장 패널 (사용자가 닫기 전까지 유지) */}
+                {isAILoading ? (
+                  <div className="flex flex-col items-center justify-center py-10 opacity-70">
+                    <div className="flex items-center gap-1.5 mb-2 h-12">
+                      <div className="w-1.5 bg-primary/60 h-4 rounded-full"></div>
+                      <div className="w-1.5 bg-primary/60 h-8 rounded-full"></div>
+                      <div className="w-1.5 bg-primary/60 h-12 rounded-full"></div>
+                      <div className="w-1.5 bg-primary/60 h-10 rounded-full"></div>
+                      <div className="w-1.5 bg-primary/60 h-5 rounded-full"></div>
+                    </div>
+                    <span className="text-xs font-bold text-primary tracking-[0.2em] uppercase">AI is analyzing...</span>
+                  </div>
+                ) : null}
+
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-white/10 bg-white dark:bg-background-dark">
+              <div className="max-w-4xl mx-auto px-4 md:px-8 py-4">
                 {(suggestedReplies.length > 0 || suggestLoading) && (
-                  <Box sx={{ mb: 1 }}>
-                    <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
-                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                        추천 문장
-                        {suggestLoading ? ' (불러오는 중...)' : ''}
-                      </Typography>
-                      <IconButton
-                        size="small"
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-black uppercase tracking-widest text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-sm text-primary">lightbulb</span>
+                        Suggestions {suggestLoading ? '(불러오는 중...)' : ''}
+                      </p>
+                      <button
+                        type="button"
                         onClick={() => {
                           setSuggestedReplies([]);
                           setInputHint('');
                         }}
-                        title="추천 닫기"
                         disabled={suggestLoading && suggestedReplies.length === 0}
+                        className="text-xs font-black text-primary hover:underline disabled:opacity-50"
                       >
-                        <Close fontSize="small" />
-                      </IconButton>
-                    </Stack>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, alignItems: 'center' }}>
-                      {suggestedReplies.map((suggestion, idx) => {
-                        const selected = inputHint === suggestion;
+                        닫기
+                      </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {suggestedReplies.map((s, idx) => {
+                        const selected = inputHint === s;
                         return (
-                          <Chip
+                          <button
                             key={idx}
-                            label={suggestion}
-                            size="small"
-                            variant={selected ? 'filled' : 'outlined'}
-                            color={selected ? 'primary' : 'default'}
-                            onClick={() => setInputHint(suggestion)}
-                            sx={{ cursor: 'pointer' }}
-                          />
+                            type="button"
+                            onClick={() => {
+                              setInputHint(s);
+                              setInputText(s);
+                            }}
+                            className={clsx(
+                              'rounded-full px-3 py-1.5 text-sm font-semibold border transition',
+                              selected
+                                ? 'bg-primary text-white border-primary'
+                                : 'bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 hover:border-primary/30 hover:text-primary'
+                            )}
+                          >
+                            {s}
+                          </button>
                         );
                       })}
-                    </Box>
-                  </Box>
+                    </div>
+                  </div>
                 )}
 
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <IconButton
-                    color={isRecordingNow ? 'error' : 'primary'}
-                    onClick={handleMicToggle}
-                    disabled={conversationEnded || isAILoading || isTranscribing || !conversationIdRef.current || whisperStatus !== 'ready'}
-                  >
-                    {isRecordingNow ? <MicOff /> : <Mic />}
-                  </IconButton>
-                  {lastVadAudioUrl && (
-                    <IconButton
-                      size="small"
-                      onClick={() => playLocalUrl(lastVadAudioUrl)}
-                      disabled={!lastVadAudioUrl || isVadTrimming || isRecordingNow || isSpeaking}
-                      title={isVadTrimming ? '음성 추출 중...' : 'VAD만 다시듣기'}
-                      sx={{ border: 1, borderColor: 'divider', borderRadius: 1 }}
-                    >
-                      {isVadTrimming ? <CircularProgress size={18} /> : <GraphicEq fontSize="small" />}
-                    </IconButton>
-                  )}
-
-                  <TextField
-                    fullWidth
-                    multiline
-                    maxRows={3}
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    placeholder={
-                      conversationEnded
-                        ? '대화가 종료되었습니다'
-                        : isRecordingNow
-                          ? '녹음 중...'
-                          : isTranscribing
-                            ? '음성 인식 중...'
-                            : (inputText ? '메시지를 입력하거나 마이크를 사용하세요' : (inputHint || '메시지를 입력하거나 마이크를 사용하세요'))
-                    }
-                    // helperText는 버튼 정렬을 깨지 않도록 사용하지 않고, placeholder로만 힌트를 제공
-                    helperText=" "
-                    FormHelperTextProps={{ sx: { display: 'none' } }}
-                    disabled={conversationEnded || isRecordingNow || isTranscribing || isAILoading || !conversationIdRef.current}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }
-                    }}
-                  />
-
-                  <IconButton
-                    color="primary"
+                <div className="flex items-end gap-3">
+                  <div className="flex-1">
+                    <textarea
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      placeholder={inputHint || placeholderText}
+                      disabled={showComposerDisabled}
+                      rows={1}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendMessage();
+                        }
+                      }}
+                      className="w-full resize-none rounded-2xl bg-gray-100 dark:bg-white/5 text-[#111418] dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-400 px-4 py-3 text-sm font-medium outline-none border border-transparent focus:border-primary/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                  <button
+                    type="button"
                     onClick={handleSendMessage}
                     disabled={conversationEnded || !inputText.trim() || isTranscribing || isAILoading || !conversationIdRef.current}
+                    className="inline-flex items-center justify-center rounded-full size-12 bg-primary text-white shadow-lg shadow-primary/20 hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                    title="전송"
                   >
-                    <Send />
-                  </IconButton>
-                </Stack>
-                {(vadTrimError || replayError) && (
-                  <Box sx={{ mt: 1 }}>
-                    {vadTrimError && (
-                      <Alert severity="warning" sx={{ py: 0, px: 1 }}>
-                        {vadTrimError}
-                      </Alert>
-                    )}
-                    {replayError && (
-                      <Alert severity="warning" sx={{ py: 0, px: 1, mt: vadTrimError ? 1 : 0 }}>
-                        {replayError}
-                      </Alert>
-                    )}
-                  </Box>
-                )}
-              </CardContent>
-            </Card>
-          </Box>
-        </Stack>
-      </Box>
+                    <span className="material-symbols-outlined">send</span>
+                  </button>
+                </div>
 
-      {/* 튜터 피드백 오버레이 - 독립적 컴포넌트 */}
+                {(vadTrimError || replayError) && (
+                  <div className="mt-3 space-y-2">
+                    {vadTrimError ? <Banner tone="warning" title="오디오 처리">{vadTrimError}</Banner> : null}
+                    {replayError ? <Banner tone="warning" title="오디오 재생">{replayError}</Banner> : null}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 md:p-6">
+                <div className="max-w-4xl mx-auto flex items-center justify-between">
+                  <div className="flex gap-3">
+                    <IconPillButton
+                      icon="volume_up"
+                      label="TTS"
+                      onClick={() => {
+                        if (isSpeaking) stopTTS();
+                      }}
+                      disabled={!isSpeaking}
+                      title={isSpeaking ? '재생 중지' : '재생 중이 아닙니다'}
+                    />
+                    {lastVadAudioUrl ? (
+                      <IconPillButton
+                        icon="graphic_eq"
+                        label="VAD"
+                        onClick={() => playLocalUrl(lastVadAudioUrl)}
+                        disabled={!lastVadAudioUrl || isVadTrimming || isRecordingNow || isSpeaking}
+                        title={isVadTrimming ? '음성 추출 중...' : 'VAD만 다시듣기'}
+                      />
+                    ) : null}
+                  </div>
+
+                  <div className="relative flex items-center justify-center">
+                    {isRecordingNow ? <ProgressRing valuePercent={micProgressPct} /> : null}
+                    <button
+                      type="button"
+                      onClick={handleMicToggle}
+                      disabled={!canRecord}
+                      className={clsx(
+                        'flex items-center justify-center rounded-full size-20 text-white shadow-2xl transition-transform disabled:opacity-60 disabled:cursor-not-allowed',
+                        isRecordingNow
+                          ? 'bg-red-500 shadow-red-500/20 hover:scale-105'
+                          : 'bg-primary shadow-primary/30 hover:scale-105'
+                      )}
+                      title={
+                        isRecordingNow
+                          ? `중지 (${Math.floor((MAX_RECORDING_DURATION - recordingDuration) / 1000)}초 남음)`
+                          : '녹음 시작'
+                      }
+                    >
+                      <span className="material-symbols-outlined text-4xl">{isRecordingNow ? 'mic_off' : 'mic'}</span>
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleEndSession}
+                    className="px-6 md:px-8 py-3 rounded-full bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-black text-sm hover:bg-red-100 dark:hover:bg-red-500/15 transition-colors"
+                  >
+                    END SESSION
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <FloatingCameraPreview
+              videoRef={videoRef}
+              canvasRef={canvasRef}
+              showGrid={showGrid}
+              setShowGrid={setShowGrid}
+              showMouthLandmarks={showMouthLandmarks}
+              setShowMouthLandmarks={setShowMouthLandmarks}
+              title="Live Preview"
+            />
+          </section>
+
+          <aside className="hidden lg:flex flex-[3] max-w-sm flex-col bg-gray-50/50 dark:bg-background-dark/80 p-6 gap-6 overflow-y-auto">
+            <div className="flex flex-col bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 overflow-hidden shadow-sm">
+              <div className="p-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between bg-gray-50/50 dark:bg-transparent">
+                <h3 className="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                  <span className="material-symbols-outlined text-sm text-primary">lightbulb</span>
+                  Suggestions
+                </h3>
+                <button
+                  type="button"
+                  onClick={generateSuggestedReplies}
+                  disabled={suggestLoading}
+                  className="text-xs text-primary font-black hover:underline disabled:opacity-50"
+                >
+                  Refresh
+                </button>
+              </div>
+              <div className="p-4 flex flex-col gap-3">
+                {suggestLoading && suggestedReplies.length === 0 ? (
+                  <div className="rounded-xl bg-gray-50 dark:bg-white/5 border border-transparent p-4">
+                    <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-tight">
+                      불러오는 중...
+                    </p>
+                  </div>
+                ) : null}
+
+                {suggestedReplies.length === 0 && !suggestLoading ? (
+                  <div className="rounded-xl bg-gray-50 dark:bg-white/5 border border-transparent p-4">
+                    <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-tight">
+                      아직 추천이 없어요
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-[#111418] dark:text-white leading-snug">
+                      전구 버튼으로 추천 문장을 받아보세요.
+                    </p>
+                  </div>
+                ) : null}
+
+                {suggestedReplies.map((s, idx) => {
+                  const selected = inputHint === s || inputText === s;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setInputHint(s);
+                        setInputText(s);
+                      }}
+                      className={clsx(
+                        'w-full text-left p-4 rounded-xl border transition-all group',
+                        selected
+                          ? 'bg-primary/10 border-primary/30'
+                          : 'bg-gray-50 dark:bg-white/5 border-transparent hover:border-primary/30'
+                      )}
+                    >
+                      <p className="text-[10px] text-gray-500 mb-1 uppercase tracking-tight">
+                        Suggested Reply
+                      </p>
+                      <p className="text-sm font-medium text-[#111418] dark:text-white group-hover:text-primary leading-snug">
+                        “{s}”
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-white/5 p-6 rounded-2xl border border-gray-200 dark:border-white/10">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest">
+                  Learning Stats
+                </span>
+                <span className="text-primary font-black">+ XP</span>
+              </div>
+
+              <div className="space-y-5">
+                <div>
+                  <div className="flex justify-between items-end">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">응답 품질(마지막)</span>
+                    <span className="text-xs font-black text-primary">
+                      {lastQuality ? `${lastQuality.overallScore}점` : '-'}
+                    </span>
+                  </div>
+                  {lastQuality ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-black bg-primary/10 text-primary border border-primary/20">
+                        {getResponseQualityFeedback(lastQuality.overallScore).message}
+                      </span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {lastQuality.wordCount}단어 · {lastQuality.wordsPerMinute.toFixed(0)} wpm
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-end">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">응답 품질(평균)</span>
+                    <span className="text-xs font-black text-primary">{avgQuality ? `${avgQuality.toFixed(1)}점` : '-'}</span>
+                  </div>
+                  <div className="mt-2 w-full bg-gray-100 dark:bg-white/10 h-1.5 rounded-full overflow-hidden">
+                    <div className="bg-primary h-full w-[75%]" />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-end">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">발화 밀도</span>
+                    <span className="text-xs font-black text-primary">
+                      {netDensity != null && netDensity > 0 ? `${netDensity.toFixed(1)}%` : '-'}
+                    </span>
+                  </div>
+                  <div className="mt-2 w-full bg-gray-100 dark:bg-white/10 h-1.5 rounded-full overflow-hidden">
+                    <div className="bg-green-500 h-full w-[92%]" />
+                  </div>
+                  {netDensity != null && netDensity > 0 ? (
+                    <p className="mt-2 text-xs font-bold text-gray-500 dark:text-gray-400">
+                      {getNetSpeakingDensityFeedback(netDensity).message}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-primary p-6 rounded-2xl text-white shadow-xl shadow-primary/20 mt-auto">
+              <div className="flex items-center justify-between mb-4">
+                <span className="material-symbols-outlined text-white/80">trending_up</span>
+                <span className="text-xl font-black">Goal Reach</span>
+              </div>
+              <p className="text-sm font-semibold opacity-90 leading-snug">오늘도 꾸준히 하고 있어요.</p>
+            </div>
+          </aside>
+        </main>
+      </div>
+
       <TutorFeedbackOverlay />
     </StudentLayout>
   );

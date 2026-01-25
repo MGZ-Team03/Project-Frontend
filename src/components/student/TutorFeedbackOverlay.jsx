@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import {
   Box,
@@ -44,6 +44,10 @@ function detectLanguage(text) {
  */
 export default function TutorFeedbackOverlay() {
   const user = useSelector((state) => state.auth.user);
+  // WebSocket 연결 상태
+  const [isConnected, setIsConnected] = useState(false);
+  const [wsError, setWsError] = useState(null);
+  
   const [feedbacks, setFeedbacks] = useState([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -55,16 +59,8 @@ export default function TutorFeedbackOverlay() {
   const [autoExpand, setAutoExpand] = useState(true);         // 자동 패널 확장
   const [autoPlayTTS, setAutoPlayTTS] = useState(false);     // TTS 자동재생
 
-  // 최신 상태를 ref로 유지 (클로저 문제 해결)
-  const optionsRef = useRef({ doNotDisturb, autoExpand, autoPlayTTS });
-  useEffect(() => {
-    optionsRef.current = { doNotDisturb, autoExpand, autoPlayTTS };
-  }, [doNotDisturb, autoExpand, autoPlayTTS]);
-
-  // WebSocket 메시지 핸들러
-  const handleWebSocketMessage = (message) => {
-    const { doNotDisturb: dnd, autoExpand: expand, autoPlayTTS: tts } = optionsRef.current;
-    
+  // WebSocket 메시지 핸들러 (useCallback으로 메모이제이션)
+  const handleWebSocketMessage = useCallback((message) => {
     if (message.type === 'feedback') {
       const newFeedback = {
         ...message,
@@ -134,37 +130,32 @@ export default function TutorFeedbackOverlay() {
         fullMessage: message,
       });
     }
-  };
+  }, [autoExpand, autoPlayTTS, playText]);
 
-  // WebSocket 연결 상태
-  const [isConnected, setIsConnected] = useState(false);
-  const [wsError, setWsError] = useState(null);
-
-  // 싱글톤 WebSocket 리스너 등록
+  // WebSocket 연결 (Singleton 사용)
   useEffect(() => {
     if (!user?.email) return;
 
-    // WebSocket 연결
+    // Singleton WebSocket 연결
     const socket = ws.connect();
-    
-    // 연결 상태 업데이트
-    const updateConnectionState = () => {
+
+    // 연결 상태 추적
+    const updateConnectionStatus = () => {
       setIsConnected(socket?.readyState === WebSocket.OPEN);
     };
-    
-    updateConnectionState();
-    
-    if (socket) {
-      socket.addEventListener('open', () => setIsConnected(true));
-      socket.addEventListener('close', () => setIsConnected(false));
-      socket.addEventListener('error', () => setWsError('WebSocket 연결 실패'));
-    }
+
+    // 초기 상태 설정
+    updateConnectionStatus();
 
     // 메시지 리스너 등록
     const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
 
+    // 연결 상태 폴링 (간단한 방법)
+    const statusInterval = setInterval(updateConnectionStatus, 1000);
+
     return () => {
-      unsubscribe();
+      unsubscribe(); // 리스너만 제거, 연결은 유지
+      clearInterval(statusInterval);
     };
   }, [user?.email]);
 

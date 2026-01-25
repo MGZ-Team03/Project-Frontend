@@ -1,26 +1,36 @@
-import { Card, Typography, Stack, Box } from '@mui/material';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+
+function CustomTooltip({ active, payload }) {
+  if (active && payload && payload.length) {
+    const p = payload[0];
+    return (
+      <div className="rounded-lg border border-[#dbe0e6] dark:border-gray-700 bg-white dark:bg-[#1a242f] px-3 py-2 shadow-lg">
+        <p className="text-xs font-black text-[#617589] dark:text-gray-400">{p?.name}</p>
+        <p className="mt-1 text-xs font-semibold text-[#111418] dark:text-white">{p?.value}%</p>
+      </div>
+    );
+  }
+  return null;
+}
 
 export default function ActivityDistributionChart({ data }) {
   return (
-    <Card elevation={0} sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider', height: 290 }}>
-      <Typography variant="h6" fontWeight={600} sx={{ mb: 1 }}>
-        활동 분포
-      </Typography>
-      <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
-        이번 달
-      </Typography>
-      
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-        <Box sx={{ flexShrink: 0 }}>
-          <ResponsiveContainer width={180} height={180}>
-            <PieChart>
+    <section className="bg-white dark:bg-[#1a242f] rounded-xl p-8 border border-[#dbe0e6] dark:border-gray-800 shadow-sm flex flex-col items-center">
+      <div className="w-full text-left mb-6">
+        <h3 className="font-black text-xl text-[#111418] dark:text-white">Pronunciation Accuracy</h3>
+        <p className="text-sm text-[#617589] dark:text-gray-400">학습 활동 분포(임시)</p>
+      </div>
+
+      <div className="flex flex-col sm:flex-row items-center gap-6 w-full">
+        <div className="w-[240px] h-[240px] overflow-visible min-w-0">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
               <Pie
                 data={data}
                 cx="50%"
                 cy="50%"
-                innerRadius={40}
-                outerRadius={60}
+                innerRadius="58%"
+                outerRadius="85%"
                 paddingAngle={3}
                 dataKey="value"
               >
@@ -28,21 +38,22 @@ export default function ActivityDistributionChart({ data }) {
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip />
+              <Tooltip content={<CustomTooltip />} />
             </PieChart>
           </ResponsiveContainer>
-        </Box>
+        </div>
 
-        {/* 범례 */}
-        <Stack spacing={1.5} sx={{ flexGrow: 1, pl: 1 }}>
+        <div className="grid grid-cols-2 gap-x-8 gap-y-4 w-full">
           {data.map((item, index) => (
-            <Stack key={index} direction="row" alignItems="center" spacing={1}>
-              <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: item.color }} />
-              <Typography variant="caption" color="text.secondary">{item.name}</Typography>
-            </Stack>
+            <div key={index} className="flex items-center gap-2">
+              <div className="size-2.5 rounded-full" style={{ backgroundColor: item.color }}></div>
+              <span className="text-xs font-semibold text-[#111418] dark:text-white">
+                {item.value}% {item.name}
+              </span>
+            </div>
           ))}
-        </Stack>
-      </Stack>
-    </Card>
+        </div>
+      </div>
+    </section>
   );
 }

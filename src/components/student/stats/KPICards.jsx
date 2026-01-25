@@ -1,87 +1,72 @@
-import { Grid, Card, Stack, Box, Typography } from '@mui/material';
-import { Timer, RecordVoiceOver, EmojiEvents, TrendingUp, TrendingDown } from '@mui/icons-material';
+function clsx(...parts) {
+  return parts.filter(Boolean).join(' ');
+}
 
-function KPICard({ icon, label, value, unit, change, gradient }) {
-  const isPositive = change >= 0;
-  
+function formatValue(value) {
+  if (value == null) return '-';
+  if (typeof value === 'number') return value.toLocaleString();
+  return String(value);
+}
+
+function KpiCard({ label, value, changeText, changeTone = 'positive', secondaryText }) {
+  const changeClass =
+    changeTone === 'positive'
+      ? 'text-[#078838] bg-green-500/10'
+      : changeTone === 'negative'
+        ? 'text-red-600 bg-red-500/10'
+        : 'text-primary bg-primary/10';
+
   return (
-    <Card 
-      elevation={0}
-      sx={{ 
-        p: 2.5,
-        borderRadius: 3,
-        background: gradient,
-        color: 'white',
-        height: '100%',
-      }}
-    >
-      <Stack spacing={1}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between">
-          <Box sx={{ 
-            p: 1, 
-            borderRadius: 2, 
-            bgcolor: 'rgba(255,255,255,0.2)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            {icon}
-          </Box>
-          <Stack direction="row" alignItems="center" spacing={0.5}>
-            {isPositive ? (
-              <TrendingUp sx={{ fontSize: 16 }} />
-            ) : (
-              <TrendingDown sx={{ fontSize: 16 }} />
-            )}
-            <Typography variant="caption" fontWeight={600}>
-              {isPositive ? '+' : ''}{change}%
-            </Typography>
-          </Stack>
-        </Stack>
-        <Typography variant="caption" sx={{ opacity: 0.9 }}>
-          {label}
-        </Typography>
-        <Typography variant="h4" fontWeight={700}>
-          {value.toLocaleString()}{unit && <Typography component="span" variant="body1" sx={{ ml: 0.5 }}>{unit}</Typography>}
-        </Typography>
-      </Stack>
-    </Card>
+    <div className="flex flex-col gap-2 rounded-xl p-6 bg-white dark:bg-[#1a242f] border border-[#dbe0e6] dark:border-gray-800 shadow-sm">
+      <p className="text-[#617589] dark:text-gray-400 text-sm font-semibold">{label}</p>
+      <div className="flex items-baseline gap-2">
+        <p className="text-3xl font-black leading-tight text-[#111418] dark:text-white">{formatValue(value)}</p>
+        {changeText ? (
+          <p className={clsx('text-xs font-black px-1.5 py-0.5 rounded', changeClass)}>{changeText}</p>
+        ) : null}
+        {secondaryText ? (
+          <p className="text-primary text-xs font-black">{secondaryText}</p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
-export default function KPICards({ kpiData }) {
+export default function KPICards({ kpiData, variant }) {
+  if (variant === 'statics') {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard
+          label="Total Study Time"
+          value={kpiData?.totalTime?.value}
+          changeText={kpiData?.totalTime?.change ? `+${kpiData.totalTime.change}%` : null}
+        />
+        <KpiCard
+          label="Conversations"
+          value={kpiData?.conversations?.value ?? 0}
+          changeText={kpiData?.conversations?.change ? `+${kpiData.conversations.change}%` : null}
+        />
+        <KpiCard
+          label="Current Streak"
+          value={kpiData?.streak?.value ?? '0 Days'}
+          secondaryText="Best: 0"
+        />
+        <KpiCard
+          label="Avg. Confidence"
+          value={kpiData?.confidence?.value ?? '-'}
+          changeText={kpiData?.confidence?.change ? `+${kpiData.confidence.change}` : null}
+          changeTone="positive"
+        />
+      </div>
+    );
+  }
+
+  // fallback (legacy shape)
   return (
-    <Grid container spacing={2} sx={{ mb: 4 }}>
-      <Grid item xs={12} sm={4} sx={{ minWidth: 240 }}>
-        <KPICard
-          icon={<Timer />}
-          label="총 학습 시간"
-          value={kpiData.totalTime.value}
-          unit="분"
-          change={kpiData.totalTime.change}
-          gradient="linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
-        />
-      </Grid>
-      <Grid item xs={12} sm={4} sx={{ minWidth: 240 }}>
-        <KPICard
-          icon={<RecordVoiceOver />}
-          label="발음 시간"
-          value={kpiData.speakingTime.value}
-          unit="분"
-          change={kpiData.speakingTime.change}
-          gradient="linear-gradient(135deg, #f093fb 0%, #f5576c 100%)"
-        />
-      </Grid>
-      <Grid item xs={12} sm={4} sx={{ minWidth: 240 }}>
-        <KPICard
-          icon={<EmojiEvents />}
-          label="연습 횟수"
-          value={kpiData.practiceCount.value}
-          unit="회"
-          change={kpiData.practiceCount.change}
-          gradient="linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"
-        />
-      </Grid>
-    </Grid>
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <KpiCard label="총 학습 시간" value={kpiData?.totalTime?.value} />
+      <KpiCard label="발음 시간" value={kpiData?.speakingTime?.value} />
+      <KpiCard label="연습 횟수" value={`${formatValue(kpiData?.practiceCount?.value)}회`} />
+    </div>
   );
 }

@@ -38,8 +38,6 @@ export default function useWebSocket(getData, options={}) {
                 const data = getDataRef.current();
                 if (data) {
                     socket.send(JSON.stringify(data));
-                } else {
-                    console.log("⏭️ 초기 전송 생략 (getData가 null 반환)");
                 }
             }
 

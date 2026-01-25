@@ -39,10 +39,11 @@ function AppContent() {
 
   // Step 2: Load user-specific stats after auth confirmed
   useEffect(() => {
-    if (authChecked && user?.email) {
+    // speakingStats는 학생 기능(연습/AI대화/통계)에서만 사용
+    if (authChecked && user?.role === 'student' && user?.email) {
       dispatch(loadStatsFromStorage({ userEmail: user.email }));
     }
-  }, [authChecked, user?.email, dispatch]);
+  }, [authChecked, user?.role, user?.email, dispatch]);
 
   return (
     <Routes>

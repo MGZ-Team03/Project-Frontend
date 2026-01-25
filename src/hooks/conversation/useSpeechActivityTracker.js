@@ -55,6 +55,19 @@ export function useSpeechActivityTracker({
 
   const detector = useMemo(() => createSpeakingDetector(), []);
 
+  // onTick과 onVoiceOnset을 ref로 관리 (메모리 누수 방지)
+  const onTickRef = useRef(onTick);
+  const onVoiceOnsetRef = useRef(onVoiceOnset);
+
+  // 콜백이 바뀔 때마다 ref 업데이트 (useEffect 재실행 방지)
+  useEffect(() => {
+    onTickRef.current = onTick;
+  }, [onTick]);
+
+  useEffect(() => {
+    onVoiceOnsetRef.current = onVoiceOnset;
+  }, [onVoiceOnset]);
+
   const finalizeVadSegments = useCallback(() => {
     const nowMs = recordingMsRef.current || 0;
     if (vadActiveRef.current && vadSegmentStartRef.current !== null) {
@@ -144,8 +157,8 @@ export function useSpeechActivityTracker({
           // TTS 구간이 VAD 세그먼트에 섞이지 않도록, 열려있는 세그먼트는 즉시 닫는다
           finalizeVadSegments();
           if (currentlySpeaking) setCurrentlySpeaking(false);
-          if (typeof onTick === 'function') {
-            onTick({ deltaMs: delta, isSpeaking: false, speakingMs: speakingMsRef.current, recordingMs: recordingMsRef.current });
+          if (typeof onTickRef.current === 'function') {
+            onTickRef.current({ deltaMs: delta, isSpeaking: false, speakingMs: speakingMsRef.current, recordingMs: recordingMsRef.current });
           }
           return;
         }
@@ -197,7 +210,7 @@ export function useSpeechActivityTracker({
           if (!hasEmittedOnsetRef.current) {
             hasEmittedOnsetRef.current = true;
             voiceOnsetAtRef.current = now;
-            if (typeof onVoiceOnset === 'function') onVoiceOnset(now);
+            if (typeof onVoiceOnsetRef.current === 'function') onVoiceOnsetRef.current(now);
           }
         }
 
@@ -230,8 +243,8 @@ export function useSpeechActivityTracker({
           });
         }
 
-        if (typeof onTick === 'function') {
-          onTick({ deltaMs: delta, isSpeaking: isSpeakingExtended, speakingMs: speakingMsRef.current, recordingMs: recordingMsRef.current });
+        if (typeof onTickRef.current === 'function') {
+          onTickRef.current({ deltaMs: delta, isSpeaking: isSpeakingExtended, speakingMs: speakingMsRef.current, recordingMs: recordingMsRef.current });
         }
       }, updateIntervalMs);
     };
@@ -240,8 +253,7 @@ export function useSpeechActivityTracker({
     return () => {
       cleanup();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, stream, isTtsPlaying, updateIntervalMs, mouthHoldMs, finalizeVadSegments]);
+  }, [enabled, stream, isTtsPlaying, updateIntervalMs, mouthHoldMs, finalizeVadSegments]); // onTick, onVoiceOnset은 ref로 처리
 
   return {
     currentlySpeaking,
