@@ -10,7 +10,7 @@ import TutorSearchDialog from '../../components/student/TutorSearchDialog';
 import { scenarios } from '../../data/conversation/scenarios';
 import useWebSocket from "../../hooks/webSocket/useWebSocket.js";
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
-// import {useStudentStatus} from "../../api/useStudentStatus.js";
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 import { getNotifications } from '../../api/notifications';
 
 export default function HomePage() {
@@ -34,7 +34,7 @@ export default function HomePage() {
     } catch (_) {}
   }, []);
 
-  // useStudentStatus(user, location);
+  useStudentStatus(user, location);
   const [tutorSearchOpen, setTutorSearchOpen] = useState(false);
   
   // 알림 관련 state

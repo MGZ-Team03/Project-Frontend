@@ -1,5 +1,6 @@
 import axios from './axios';
 import ws from "../config/webSocketConfig.js";
+import {sendStudentStatus} from "./useStudentStatus.js";
 // import {sendStudentStatus} from "./useStudentStatus.js";
 
 
@@ -49,13 +50,13 @@ export const logout = async () => {
   const user = userStr ? JSON.parse(userStr) : null;
 
   // inactive 상태 전송
-  // if (user?.email) {
-  //   try {
-  //     await sendStudentStatus(user.email, user.tutorEmail, "/logout");
-  //   } catch (error) {
-  //     console.error('로그아웃 상태 전송 실패:', error);
-  //   }
-  // }
+  if (user?.email) {
+    try {
+      await sendStudentStatus(user.email, user.tutorEmail, "/logout");
+    } catch (error) {
+      console.error('로그아웃 상태 전송 실패:', error);
+    }
+  }
 
   ws.disconnect();
   localStorage.removeItem('idToken');
