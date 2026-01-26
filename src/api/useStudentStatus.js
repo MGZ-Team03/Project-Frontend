@@ -19,7 +19,7 @@ export const sendStudentStatus = async (userEmail, tutorEmail, page) => {
     console.log(payload);
 
     try {
-        const {data} = await api.post("https://vaf6in8xz0.execute-api.ap-northeast-2.amazonaws.com/Dev/api/student-status", payload);
+        const {data} = await api.post("/api/student-status", payload);
         return data;
     } catch (error) {
         throw error;
@@ -48,7 +48,7 @@ export const sendStudentStatusSync = async (userEmail, tutorEmail) => {
     });
 
     try {
-        const {data} = await api.post("https://vaf6in8xz0.execute-api.ap-northeast-2.amazonaws.com/Dev/api/student-status", payload);
+        const {data} = await api.post("/api/student-status", payload);
         return data;
     } catch (error) {
         throw error;
@@ -103,7 +103,7 @@ export const useStudentStatus = (user, page) => {
 export const sendStudentStatusBeacon = (userEmail, tutorEmail) => {
     if (!userEmail) return;
 
-    const url = "https://vaf6in8xz0.execute-api.ap-northeast-2.amazonaws.com/Dev/api/student-status";
+    const url = "/api/student-status";
     const payload = JSON.stringify({
         action: "/logout",
         data: {
