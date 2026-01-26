@@ -14,9 +14,9 @@ import { getRecommendedSentences, getSentenceFeedback } from '../../api/sentence
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 import { toApiDifficulty, toApiTopic } from '../../utils/apiMappers';
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
-import { extractVADSegments } from '../../utils/audioTrimmer';
-import { createPcmRecorder } from '../../utils/pcmRecorder';
+import { playVadReplay, stopVadReplay } from '../../utils/vadReplayPlayer';
 import { calculateResponseQuality } from '../../utils/conversation/responseQualityCalculator';
+import { cancelPrevious, enqueue } from '../../utils/postRecordingPipeline';
 
 
 
@@ -32,6 +32,7 @@ import {
   addResponseQuality,
   incrementChatTurn,
   addResponseLatency,
+  uploadDailyStatsOnRecordingEnd,
 } from '../../store/slices/speakingStatsSlice';
 import {
   selectDailyAvgNetSpeakingDensity,
@@ -133,19 +134,21 @@ export default function ChatPage() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const cameraStreamRef = useRef(null);
-  const messagesEndRef = useRef(null);
+  const messagesScrollRef = useRef(null);
+  const autoScrollEnabledRef = useRef(true);
+  const composerRef = useRef(null);
   const initialMessageSentRef = useRef(false);
   const lastAutoSpokenRef = useRef(null);
   const conversationIdRef = useRef(null);
   const sttStatusMsgIdRef = useRef(1);
   const stopDebounceTimerRef = useRef(null);
+  const isRecordingRef = useRef(false); // 즉시 동기화용 ref
   const [isWhisperRecording, setIsWhisperRecording] = useState(false);
   const whisperStreamRef = useRef(null);
   const whisperRecorderRef = useRef(null);
   const whisperChunksRef = useRef([]);
   const whisperStartedAtRef = useRef(null);
   const [micStream, setMicStream] = useState(null);
-  const pcmRecorderRef = useRef(null);
 
   // Recording timer state (for 30-second limit)
   const recordingStartTimeRef = useRef(null);
@@ -215,10 +218,6 @@ export default function ChatPage() {
           whisperRecorderRef.current.stop();
         } catch (_) {}
       }
-      try {
-        pcmRecorderRef.current?.stop?.();
-      } catch (_) {}
-      pcmRecorderRef.current = null;
       whisperRecorderRef.current = null;
       whisperChunksRef.current = [];
       if (whisperStreamRef.current) {
@@ -245,7 +244,7 @@ export default function ChatPage() {
   }, [dispatch]);
 
   // 실제 발화시간(VAD/MAR) 트래킹: Whisper 스트림 재사용
-  const { speakingMsRef, finalizeVadSegments } = useSpeechActivityTracker({
+  const { speakingMsRef, cameraDetectedMsRef, finalizeVadSegments } = useSpeechActivityTracker({
     enabled: isWhisperRecording,
     stream: micStream,
     landmarksRef,
@@ -253,50 +252,34 @@ export default function ChatPage() {
     onTick: handleSpeechTick,
   });
 
-  const [lastRecordedAudioUrl, setLastRecordedAudioUrl] = useState(null);
-  const [lastVadAudioUrl, setLastVadAudioUrl] = useState(null);
+  const lastVadReplayPcmRef = useRef(null); // Float32Array (16k)
   const [isVadTrimming, setIsVadTrimming] = useState(false);
   const [vadTrimError, setVadTrimError] = useState(null);
   const [replayError, setReplayError] = useState(null);
-  const replayAudioRef = useRef(null);
 
   const clearReplayUrls = useCallback(() => {
-    setLastRecordedAudioUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    setLastVadAudioUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
+    lastVadReplayPcmRef.current = null;
   }, []);
 
-  const playLocalUrl = useCallback((url) => {
-    if (!url) return;
+  const playLastVad = useCallback(async () => {
+    const pcm = lastVadReplayPcmRef.current || null;
+    if (!pcm) return;
     setReplayError(null);
     try {
-      replayAudioRef.current?.pause?.();
-    } catch (_) {}
-    const audio = new Audio(url);
-    replayAudioRef.current = audio;
-    audio.play().catch((e) => {
-      setReplayError(e?.message || '오디오 재생에 실패했습니다. (브라우저 포맷/코덱 미지원 가능)');
-    });
+      await playVadReplay({ pcm, sampleRate: 16000 });
+    } catch (e) {
+      setReplayError(e?.message || '오디오 재생에 실패했습니다.');
+    }
   }, []);
 
   useEffect(() => {
     return () => {
       try {
-        replayAudioRef.current?.pause?.();
+        stopVadReplay();
       } catch (_) {}
-      try {
-        if (lastRecordedAudioUrl) URL.revokeObjectURL(lastRecordedAudioUrl);
-      } catch (_) {}
-      try {
-        if (lastVadAudioUrl) URL.revokeObjectURL(lastVadAudioUrl);
-      } catch (_) {}
+      lastVadReplayPcmRef.current = null;
     };
-  }, [lastRecordedAudioUrl, lastVadAudioUrl]);
+  }, []);
 
   // Camera permission
   useEffect(() => {
@@ -391,9 +374,19 @@ export default function ChatPage() {
   // Recording duration limit (30 seconds)
   const MAX_RECORDING_DURATION = 30 * 1000;
 
-  // Auto scroll to bottom
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    autoScrollEnabledRef.current = distanceToBottom < 80;
+  }, []);
+
+  // Smart auto-scroll: only when user is near bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    if (!autoScrollEnabledRef.current) return;
+    el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   // Initial AI message
@@ -491,7 +484,7 @@ export default function ChatPage() {
 
   // Mic toggle handler (Whisper only)
   const handleMicToggle = async () => {
-    if (isWhisperRecording) {
+    if (isRecordingRef.current) {
       // 수동 stop(끝자락 잘림 방지)
       if (stopDebounceTimerRef.current) return;
       stopDebounceTimerRef.current = setTimeout(() => {
@@ -502,6 +495,9 @@ export default function ChatPage() {
       }, 500);
       return;
     }
+
+    // 새 녹음 시작 시: 이전 후처리 파이프라인 결과 무시(latest-only)
+    cancelPrevious('chat');
 
     setInputText('');
     setSttError(null);
@@ -548,21 +544,16 @@ export default function ChatPage() {
       });
       whisperStreamRef.current = stream;
       setMicStream(stream);
-      // PCM recorder (WAV) for replay/trim (Safari 호환)
-      try {
-        pcmRecorderRef.current = createPcmRecorder(stream, { channelCount: 1 });
-      } catch (_) {
-        pcmRecorderRef.current = null;
-      }
-
       const preferred = [
+        // mp4 우선(테스트용)
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/mp4',
         'audio/webm;codecs=opus',
         'audio/webm',
         'audio/ogg;codecs=opus',
-        'audio/mp4;codecs=mp4a.40.2',
-        'audio/mp4',
       ];
       const mimeType = preferred.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
+
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       whisperRecorderRef.current = recorder;
 
@@ -575,35 +566,13 @@ export default function ChatPage() {
         const audioBlob = new Blob(whisperChunksRef.current, { type: blobType });
         whisperChunksRef.current = [];
 
-        // VAD 세그먼트 확정 + 원본/트리밍 오디오 URL 생성(재생용)
+        // VAD 세그먼트 확정 (재생/통계용)
         const vadSegments = typeof finalizeVadSegments === 'function' ? finalizeVadSegments() : [];
-        let replayBaseBlob = audioBlob;
-        try {
-          const wav = await pcmRecorderRef.current?.stop?.();
-          if (wav) replayBaseBlob = wav;
-        } catch (_) {}
-        pcmRecorderRef.current = null;
-        setLastRecordedAudioUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return URL.createObjectURL(replayBaseBlob);
-        });
-        setIsVadTrimming(true);
-        setVadTrimError(null);
-        try {
-          const vadBlob = await extractVADSegments(replayBaseBlob, vadSegments);
-          setLastVadAudioUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return URL.createObjectURL(vadBlob);
-          });
-        } catch (e) {
-          setVadTrimError(e?.message || 'VAD 오디오 생성에 실패했습니다.');
-          setLastVadAudioUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return null;
-          });
-        } finally {
-          setIsVadTrimming(false);
-        }
+        const vadSegmentsDurationMs = (vadSegments || []).reduce((sum, seg) => {
+          const s = typeof seg?.start === 'number' ? seg.start : 0;
+          const e = typeof seg?.end === 'number' ? seg.end : 0;
+          return sum + Math.max(0, e - s);
+        }, 0);
 
         if (whisperStreamRef.current) {
           whisperStreamRef.current.getTracks().forEach((t) => {
@@ -614,6 +583,7 @@ export default function ChatPage() {
         }
         setMicStream(null);
         whisperRecorderRef.current = null;
+        isRecordingRef.current = false; // 즉시 동기화
         setIsWhisperRecording(false);
 
         // Clear recording timer
@@ -630,43 +600,106 @@ export default function ChatPage() {
         setLastSpeechDurationMs(speakingMs);
         setTotalTimeMs((t) => t + durationMs);
 
-        setIsTranscribing(true);
-        try {
-          const result = await whisperTranscribe(audioBlob, { backend: 'webgpu', vad: true, trimThreshold: 0.003, trimPaddingSec: 0.1 });
-          const text = String(result?.text || '').trim();
-          if (text) setInputText(text);
-          setMessages((prev) =>
-            prev.map((m) =>
-              m?.id === sttMsgId
-                ? { ...m, content: `🎤 인식 결과: ${text || '(인식 실패)'}`, streaming: false }
-                : m
-            )
-          );
+        // 녹음 후 처리(STT/VAD 트리밍/업로드)는 싱글턴 파이프라인에서 1개씩 처리
+        enqueue(
+          'chat',
+          async ({ isCurrent }) => {
+            if (!isCurrent()) return;
 
-          // Response Quality 계산 및 저장
-          if (text && vadSegments.length > 0 && speakingMs > 0) {
-            const responseQuality = calculateResponseQuality({
-              durationMs: speakingMs,
-              transcript: text,
-              vadSegments,
-            });
-            dispatch(addResponseQuality(responseQuality));
-            console.log('[Response Quality]', responseQuality);
-          }
-        } catch (e) {
-          const errMsg = e?.message || String(e);
-          setSttError(errMsg);
-          setMessages((prev) =>
-            prev.map((m) =>
-              m?.id === sttMsgId ? { ...m, content: `⚠️ 음성 인식 실패: ${errMsg}`, streaming: false } : m
-            )
-          );
-        } finally {
-          setIsTranscribing(false);
-        }
+            // 통계 백업: 유효 녹음(diff 통과 여부는 thunk에서 검사), 데이터 변화가 있으면 POST
+            const cameraMs = Math.max(0, cameraDetectedMsRef?.current || 0);
+            const vadMs = Math.max(0, vadSegmentsDurationMs || 0);
+            dispatch(uploadDailyStatsOnRecordingEnd({ cameraMs, vadMs }));
+
+            setIsTranscribing(true);
+            try {
+              const result = await whisperTranscribe(audioBlob, {
+                backend: 'webgpu',
+                vad: true,
+                trimThreshold: 0.003,
+                trimPaddingSec: 0.1,
+              });
+              if (!isCurrent()) return;
+              const text = String(result?.text || '').trim();
+              if (text) setInputText(text);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m?.id === sttMsgId
+                    ? { ...m, content: `🎤 인식 결과: ${text || '(인식 실패)'}`, streaming: false }
+                    : m
+                )
+              );
+
+              // Response Quality 계산 및 저장
+              if (text && vadSegments.length > 0 && speakingMs > 0) {
+                const responseQuality = calculateResponseQuality({
+                  durationMs: speakingMs,
+                  transcript: text,
+                  vadSegments,
+                });
+                dispatch(addResponseQuality(responseQuality));
+                console.log('[Response Quality]', responseQuality);
+              }
+            } catch (e) {
+              if (!isCurrent()) return;
+              const errMsg = e?.message || String(e);
+              setSttError(errMsg);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m?.id === sttMsgId ? { ...m, content: `⚠️ 음성 인식 실패: ${errMsg}`, streaming: false } : m
+                )
+              );
+            } finally {
+              if (!isCurrent()) return;
+              setIsTranscribing(false);
+
+              // VAD 다시듣기: WAV/Blob 생성 없이 WebAudio로 재생할 PCM을 만든다
+              if (!result?.replayPcm) return;
+              setIsVadTrimming(true);
+              setVadTrimError(null);
+              try {
+                const replayPcm = result.replayPcm;
+                const sr = Number(result.replaySampleRate || 16000) || 16000;
+                const segs = Array.isArray(vadSegments) ? vadSegments : [];
+                let totalSamples = 0;
+                const ranges = segs
+                  .map((seg) => {
+                    const sMs = Math.max(0, Number(seg?.start || 0));
+                    const eMs = Math.max(sMs, Number(seg?.end || 0));
+                    const s = Math.max(0, Math.min(replayPcm.length, Math.floor((sMs / 1000) * sr)));
+                    const e = Math.max(s, Math.min(replayPcm.length, Math.floor((eMs / 1000) * sr)));
+                    const len = Math.max(0, e - s);
+                    totalSamples += len;
+                    return { s, e, len };
+                  })
+                  .filter((r) => r.len > 0);
+                if (!ranges.length || totalSamples <= 0) {
+                  lastVadReplayPcmRef.current = null;
+                  return;
+                }
+                const out = new Float32Array(totalSamples);
+                let off = 0;
+                for (const r of ranges) {
+                  out.set(replayPcm.subarray(r.s, r.e), off);
+                  off += r.len;
+                }
+                if (!isCurrent()) return;
+                lastVadReplayPcmRef.current = out;
+              } catch (e) {
+                if (!isCurrent()) return;
+                setVadTrimError(e?.message || 'VAD 오디오 생성에 실패했습니다.');
+                lastVadReplayPcmRef.current = null;
+              } finally {
+                if (isCurrent()) setIsVadTrimming(false);
+              }
+            }
+          },
+          { label: 'chat_onstop' }
+        );
       };
 
       recorder.start();
+      isRecordingRef.current = true; // 즉시 동기화
       setIsWhisperRecording(true);
       return; // now recording; stop on next click
     } catch (e) {
@@ -820,6 +853,9 @@ export default function ChatPage() {
     !!conversationIdRef.current &&
     whisperStatus === 'ready';
 
+  // 녹음 중일 때는 무조건 클릭 가능 (중지를 위해)
+  const canClickMic = isRecordingNow || canRecord;
+
   const sessionHeader = useMemo(() => {
     return (
       <header
@@ -892,10 +928,10 @@ export default function ChatPage() {
       sessionHeader={sessionHeader}
       todayTime={Math.floor(totalTimeMs / 1000 / 60)}
     >
-      <div className="-mx-4 -my-8 flex h-full min-h-[calc(100vh-140px)]">
-        <main className="relative flex flex-1 overflow-hidden">
-          <section className="relative flex-[7] flex flex-col bg-white dark:bg-background-dark border-r border-[#e5e7eb] dark:border-white/10 overflow-hidden">
-            <div className="px-4 md:px-8 pt-6 space-y-3">
+      <div className="h-full min-h-0 flex">
+        <main className="relative flex flex-1 min-h-0 overflow-hidden">
+          <section className="relative flex-[7] flex flex-col min-h-0 overflow-hidden bg-white dark:bg-background-dark border-r border-[#e5e7eb] dark:border-white/10">
+            <div className="px-4 md:px-6 pt-2 space-y-2">
               {aiError ? (
                 <Banner tone="error" title="AI 응답 오류">
                   <p className="text-sm opacity-90">{aiError?.message || String(aiError)}</p>
@@ -936,7 +972,7 @@ export default function ChatPage() {
               ) : null}
             </div>
 
-            <div className="px-4 md:px-8 py-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between bg-white/90 dark:bg-background-dark/90 backdrop-blur-md sticky top-0 z-10">
+            <div className="px-4 md:px-6 py-2 border-b border-gray-100 dark:border-white/10 flex items-center justify-between bg-white/90 dark:bg-background-dark/90 backdrop-blur-md sticky top-0 z-10">
               <div className="flex items-center gap-4">
                 <div className="relative">
                   <div className="size-12 rounded-full bg-primary/10 flex items-center justify-center border-2 border-primary/20 overflow-hidden">
@@ -964,8 +1000,12 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6 md:p-12 bg-gray-50/30 dark:bg-background-dark/30">
-              <div className="max-w-4xl mx-auto flex flex-col gap-10">
+            <div
+              ref={messagesScrollRef}
+              onScroll={handleMessagesScroll}
+              className="flex-1 min-h-0 overflow-y-auto p-3 md:p-5 bg-gray-50/30 dark:bg-background-dark/30"
+            >
+              <div className="max-w-6xl mx-auto flex flex-col gap-6">
                 {messages.map((message, index) => {
                   const role = message?.role;
                   const content = String(message?.content || '');
@@ -975,13 +1015,20 @@ export default function ChatPage() {
                   const isLast = index === messages.length - 1;
                   const isBlurred = isAssistant && !message.streaming && !revealedMessages.has(index);
 
+                  const bubbleBase = 'relative inline-block rounded-3xl px-4 py-3';
+                  const bubbleTone = isUser
+                    ? 'bg-primary text-white shadow-sm'
+                    : isSystem
+                      ? 'rounded-full px-4 py-2 bg-white/80 dark:bg-white/10 border border-gray-100 dark:border-white/10 text-xs font-bold text-gray-600 dark:text-gray-300'
+                      : 'bg-white dark:bg-white/10 border border-gray-100 dark:border-white/10 text-[#111418] dark:text-white';
+                  const bubbleAccent = isAssistant && index > 0 ? 'border-l-4 border-primary' : '';
+
                   return (
                     <div
                       key={`${role}-${index}`}
                       className={clsx(
                         'flex gap-6',
-                        isUser ? 'justify-end' : 'justify-start',
-                        isSystem ? 'justify-center' : ''
+                        isUser ? 'justify-end' : 'justify-start'
                       )}
                     >
                       <div className={clsx('flex-1', isUser ? 'text-right max-w-[90%]' : 'max-w-[90%]')}>
@@ -995,57 +1042,50 @@ export default function ChatPage() {
                         </span>
 
                         <div className={clsx('relative inline-block', isUser ? 'text-right' : '')}>
-                          {isSystem ? (
-                            <div className="rounded-full px-4 py-2 bg-white/70 dark:bg-white/5 border border-gray-100 dark:border-white/10 text-xs font-bold text-gray-600 dark:text-gray-300">
-                              {content}
-                            </div>
-                          ) : (
-                            <div
-                              role={isAssistant ? 'button' : undefined}
-                              tabIndex={isAssistant ? 0 : undefined}
-                              onClick={() => {
+                          <div
+                            role={isAssistant ? 'button' : undefined}
+                            tabIndex={isAssistant ? 0 : undefined}
+                            onClick={() => {
+                              if (isAssistant && isBlurred) handleRevealMessage(index);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
                                 if (isAssistant && isBlurred) handleRevealMessage(index);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  if (isAssistant && isBlurred) handleRevealMessage(index);
-                                }
-                              }}
+                              }
+                            }}
+                            className={clsx(
+                              bubbleBase,
+                              bubbleTone,
+                              bubbleAccent,
+                              isAssistant && isBlurred ? 'cursor-pointer' : ''
+                            )}
+                          >
+                            <p
                               className={clsx(
-                                'relative',
-                                isAssistant && index > 0
-                                  ? 'bg-primary/5 dark:bg-primary/10 p-6 md:p-8 rounded-3xl border-l-4 border-primary'
-                                  : '',
-                                isAssistant && isBlurred ? 'cursor-pointer' : ''
+                                'text-base lg:text-lg leading-relaxed',
+                                isUser ? 'text-white font-semibold' : isAssistant ? 'font-light' : '',
+                                isBlurred ? 'blur-[6px] select-none' : ''
                               )}
                             >
-                              <p
-                                className={clsx(
-                                  'text-2xl lg:text-3xl leading-relaxed',
-                                  isAssistant ? 'text-[#111418] dark:text-white font-light' : 'text-primary font-medium',
-                                  isBlurred ? 'blur-[6px] select-none' : ''
-                                )}
-                              >
-                                {content || (message.streaming ? '...' : '')}
-                              </p>
+                              {content || (message.streaming ? '...' : '')}
+                            </p>
 
-                              {message.streaming ? (
-                                <div className="mt-4 flex gap-1.5">
-                                  <span className="size-2 bg-primary/40 rounded-full" />
-                                  <span className="size-2 bg-primary/40 rounded-full" />
-                                  <span className="size-2 bg-primary/40 rounded-full" />
-                                </div>
-                              ) : null}
+                            {message.streaming ? (
+                              <div className="mt-4 flex gap-1.5">
+                                <span className="size-2 bg-primary/40 rounded-full" />
+                                <span className="size-2 bg-primary/40 rounded-full" />
+                                <span className="size-2 bg-primary/40 rounded-full" />
+                              </div>
+                            ) : null}
 
-                              {isAssistant && isBlurred ? (
-                                <div className="absolute inset-0 flex items-center justify-center">
-                                  <div className="bg-black/70 text-white px-3 py-1 rounded-full text-xs font-bold">
-                                    클릭하여 보기
-                                  </div>
+                            {isAssistant && isBlurred ? (
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="bg-black/70 text-white px-3 py-1 rounded-full text-xs font-bold">
+                                  클릭하여 보기
                                 </div>
-                              ) : null}
-                            </div>
-                          )}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
 
                         {!isSystem ? (
@@ -1189,12 +1229,11 @@ export default function ChatPage() {
                   </div>
                 ) : null}
 
-                <div ref={messagesEndRef} />
               </div>
             </div>
 
-            <div className="border-t border-gray-100 dark:border-white/10 bg-white dark:bg-background-dark">
-              <div className="max-w-4xl mx-auto px-4 md:px-8 py-4">
+            <div className="shrink-0 border-t border-gray-100 dark:border-white/10 bg-white dark:bg-background-dark">
+              <div className="max-w-6xl mx-auto px-3 md:px-5 py-3">
                 {(suggestedReplies.length > 0 || suggestLoading) && (
                   <div className="mb-3">
                     <div className="flex items-center justify-between gap-2">
@@ -1223,7 +1262,7 @@ export default function ChatPage() {
                             type="button"
                             onClick={() => {
                               setInputHint(s);
-                              setInputText(s);
+                              composerRef.current?.focus?.();
                             }}
                             className={clsx(
                               'rounded-full px-3 py-1.5 text-sm font-semibold border transition',
@@ -1243,6 +1282,7 @@ export default function ChatPage() {
                 <div className="flex items-end gap-3">
                   <div className="flex-1">
                     <textarea
+                      ref={composerRef}
                       value={inputText}
                       onChange={(e) => setInputText(e.target.value)}
                       placeholder={inputHint || placeholderText}
@@ -1256,6 +1296,27 @@ export default function ChatPage() {
                       }}
                       className="w-full resize-none rounded-2xl bg-gray-100 dark:bg-white/5 text-[#111418] dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-400 px-4 py-3 text-sm font-medium outline-none border border-transparent focus:border-primary/30 disabled:opacity-60 disabled:cursor-not-allowed"
                     />
+                    {inputHint ? (
+                      <div className="mt-2 flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInputText(inputHint);
+                            composerRef.current?.focus?.();
+                          }}
+                          className="text-xs font-black text-primary hover:underline"
+                        >
+                          Use hint
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setInputHint('')}
+                          className="text-xs font-black text-gray-500 dark:text-gray-400 hover:underline"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                   <button
                     type="button"
@@ -1276,55 +1337,54 @@ export default function ChatPage() {
                 )}
               </div>
 
-              <div className="p-4 md:p-6">
-                <div className="max-w-4xl mx-auto flex items-center justify-between">
-                  <div className="flex gap-3">
+              <div className="p-3 md:p-4">
+                <div className="max-w-6xl mx-auto flex items-center justify-center relative">
+                  {/* Center group: MIC + 다시듣기 */}
+                  <div className="flex gap-4 items-center">
+                    {/* MIC button */}
+                    <div className="relative flex items-center justify-center">
+                      {isRecordingNow ? <ProgressRing valuePercent={micProgressPct} /> : null}
+                      <button
+                        type="button"
+                        onClick={handleMicToggle}
+                        disabled={!canClickMic}
+                        className={clsx(
+                          'flex items-center justify-center rounded-full size-20 text-white shadow-2xl transition-transform disabled:opacity-60 disabled:cursor-not-allowed',
+                          isRecordingNow
+                            ? 'bg-red-500 shadow-red-500/20 hover:scale-105'
+                            : 'bg-primary shadow-primary/30 hover:scale-105'
+                        )}
+                        title={
+                          isRecordingNow
+                            ? `녹음 중지 (${Math.floor((MAX_RECORDING_DURATION - recordingDuration) / 1000)}초 남음)`
+                            : '녹음 시작'
+                        }
+                      >
+                        <span className="material-symbols-outlined text-4xl">{isRecordingNow ? 'mic_off' : 'mic'}</span>
+                      </button>
+                    </div>
+
+                    {/* VAD replay button - 항상 표시 */}
                     <IconPillButton
-                      icon="volume_up"
-                      label="TTS"
-                      onClick={() => {
-                        if (isSpeaking) stopTTS();
-                      }}
-                      disabled={!isSpeaking}
-                      title={isSpeaking ? '재생 중지' : '재생 중이 아닙니다'}
-                    />
-                    {lastVadAudioUrl ? (
-                      <IconPillButton
-                        icon="graphic_eq"
-                        label="VAD"
-                        onClick={() => playLocalUrl(lastVadAudioUrl)}
-                        disabled={!lastVadAudioUrl || isVadTrimming || isRecordingNow || isSpeaking}
-                        title={isVadTrimming ? '음성 추출 중...' : 'VAD만 다시듣기'}
-                      />
-                    ) : null}
-                  </div>
-
-                  <div className="relative flex items-center justify-center">
-                    {isRecordingNow ? <ProgressRing valuePercent={micProgressPct} /> : null}
-                    <button
-                      type="button"
-                      onClick={handleMicToggle}
-                      disabled={!canRecord}
-                      className={clsx(
-                        'flex items-center justify-center rounded-full size-20 text-white shadow-2xl transition-transform disabled:opacity-60 disabled:cursor-not-allowed',
-                        isRecordingNow
-                          ? 'bg-red-500 shadow-red-500/20 hover:scale-105'
-                          : 'bg-primary shadow-primary/30 hover:scale-105'
-                      )}
+                      icon="graphic_eq"
+                      label="다시듣기"
+                      onClick={playLastVad}
+                      disabled={!lastVadReplayPcmRef.current || isVadTrimming || isRecordingNow || isSpeaking}
                       title={
-                        isRecordingNow
-                          ? `중지 (${Math.floor((MAX_RECORDING_DURATION - recordingDuration) / 1000)}초 남음)`
-                          : '녹음 시작'
+                        !lastVadReplayPcmRef.current
+                          ? '녹음 후 다시듣기 가능'
+                          : isVadTrimming
+                          ? '음성 추출 중...'
+                          : '내 말 다시듣기'
                       }
-                    >
-                      <span className="material-symbols-outlined text-4xl">{isRecordingNow ? 'mic_off' : 'mic'}</span>
-                    </button>
+                    />
                   </div>
 
+                  {/* Right: END SESSION (absolute positioning) */}
                   <button
                     type="button"
                     onClick={handleEndSession}
-                    className="px-6 md:px-8 py-3 rounded-full bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-black text-sm hover:bg-red-100 dark:hover:bg-red-500/15 transition-colors"
+                    className="absolute right-0 px-6 md:px-8 py-3 rounded-full bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-black text-sm hover:bg-red-100 dark:hover:bg-red-500/15 transition-colors"
                   >
                     END SESSION
                   </button>
@@ -1343,77 +1403,14 @@ export default function ChatPage() {
             />
           </section>
 
-          <aside className="hidden lg:flex flex-[3] max-w-sm flex-col bg-gray-50/50 dark:bg-background-dark/80 p-6 gap-6 overflow-y-auto">
-            <div className="flex flex-col bg-white dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 overflow-hidden shadow-sm">
-              <div className="p-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between bg-gray-50/50 dark:bg-transparent">
-                <h3 className="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                  <span className="material-symbols-outlined text-sm text-primary">lightbulb</span>
-                  Suggestions
-                </h3>
-                <button
-                  type="button"
-                  onClick={generateSuggestedReplies}
-                  disabled={suggestLoading}
-                  className="text-xs text-primary font-black hover:underline disabled:opacity-50"
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="p-4 flex flex-col gap-3">
-                {suggestLoading && suggestedReplies.length === 0 ? (
-                  <div className="rounded-xl bg-gray-50 dark:bg-white/5 border border-transparent p-4">
-                    <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-tight">
-                      불러오는 중...
-                    </p>
-                  </div>
-                ) : null}
-
-                {suggestedReplies.length === 0 && !suggestLoading ? (
-                  <div className="rounded-xl bg-gray-50 dark:bg-white/5 border border-transparent p-4">
-                    <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-tight">
-                      아직 추천이 없어요
-                    </p>
-                    <p className="mt-2 text-sm font-semibold text-[#111418] dark:text-white leading-snug">
-                      전구 버튼으로 추천 문장을 받아보세요.
-                    </p>
-                  </div>
-                ) : null}
-
-                {suggestedReplies.map((s, idx) => {
-                  const selected = inputHint === s || inputText === s;
-                  return (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => {
-                        setInputHint(s);
-                        setInputText(s);
-                      }}
-                      className={clsx(
-                        'w-full text-left p-4 rounded-xl border transition-all group',
-                        selected
-                          ? 'bg-primary/10 border-primary/30'
-                          : 'bg-gray-50 dark:bg-white/5 border-transparent hover:border-primary/30'
-                      )}
-                    >
-                      <p className="text-[10px] text-gray-500 mb-1 uppercase tracking-tight">
-                        Suggested Reply
-                      </p>
-                      <p className="text-sm font-medium text-[#111418] dark:text-white group-hover:text-primary leading-snug">
-                        “{s}”
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+          <aside className="hidden lg:flex flex-[3] max-w-sm flex-col min-h-0 bg-gray-50/50 dark:bg-background-dark/80 p-6 gap-6 overflow-hidden">
+            {/* Suggestions 섹션 제거 - 입력창 위에만 표시 */}
 
             <div className="bg-white dark:bg-white/5 p-6 rounded-2xl border border-gray-200 dark:border-white/10">
               <div className="flex items-center justify-between mb-4">
                 <span className="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest">
                   Learning Stats
                 </span>
-                <span className="text-primary font-black">+ XP</span>
               </div>
 
               <div className="space-y-5">
@@ -1465,13 +1462,6 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <div className="bg-primary p-6 rounded-2xl text-white shadow-xl shadow-primary/20 mt-auto">
-              <div className="flex items-center justify-between mb-4">
-                <span className="material-symbols-outlined text-white/80">trending_up</span>
-                <span className="text-xl font-black">Goal Reach</span>
-              </div>
-              <p className="text-sm font-semibold opacity-90 leading-snug">오늘도 꾸준히 하고 있어요.</p>
-            </div>
           </aside>
         </main>
       </div>

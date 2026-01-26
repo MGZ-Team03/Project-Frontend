@@ -1,6 +1,12 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { getDailyStats } from '../../api/stats';
-import { mapBackendToReduxStats } from '../../utils/statsSync';
+import { getDailyStats, postDailyStats } from '../../api/stats';
+import {
+  calculatePayloadHash,
+  mapBackendToReduxStats,
+  mapDailyStatsToBackend,
+  saveLastSyncInfo,
+  shouldUploadStats,
+} from '../../utils/statsSync';
 import { getStorageKey, migrateOldStatsKey } from '../../utils/storageKeys';
 
 // 오늘 날짜 키 생성
@@ -17,6 +23,9 @@ const initialSessionState = {
   // 시간 측정 (ms)
   totalRecordingTime: 0, // 녹음 버튼 누른 총 시간
   userSpeakingTime: 0,   // 실제 발화 시간
+  // 활동별 발화 시간 (ms)
+  chatSpeakingTime: 0,
+  practiceSpeakingTime: 0,
 
   // 문장 연습 (Pace Ratio 계산용)
   currentPractice: {
@@ -25,9 +34,16 @@ const initialSessionState = {
     userSpeakingDuration: 0,
   },
 
-  // 세션 내 기록
-  practiceRecords: [], // [{sentenceId, paceRatio, userTime, refTime, timestamp}]
-  responseQualities: [], // [{durationMs, wordCount, wordsPerMinute, fluencyScore, overallScore, timestamp}]
+  // ===== 세션 지표(배열 제거: 마지막 + 누적평균) =====
+  // 문장 연습 Pace Ratio
+  lastPaceRatio: null,
+  paceRatioAvg: 0,
+  paceRatioCount: 0,
+
+  // AI 대화 Response Quality
+  lastResponseQuality: null, // {durationMs, wordCount, wordsPerMinute, fluencyScore, overallScore, timestamp}
+  responseQualityAvg: 0,
+  responseQualityCount: 0,
 };
 
 // 초기 일별 통계 상태
@@ -37,6 +53,9 @@ const initialDailyStats = {
   // 기본 통계
   totalRecordingTime: 0, // 일별 총 녹음 시간 (ms)
   totalSpeakingTime: 0,  // 일별 총 발화 시간 (ms)
+  // 활동별 발화 시간 (ms)
+  chatSpeakingTime: 0,
+  practiceSpeakingTime: 0,
   sessionsCount: 0,
   practiceCount: 0,
   chatTurnsCount: 0,     // AI 대화 턴 수
@@ -137,6 +156,93 @@ export const saveStatsToBackend = createAsyncThunk(
   }
 );
 
+function safeWeightedAvg({ baseAvg, baseCount, addAvg, addCount }) {
+  const bCount = Math.max(0, baseCount || 0);
+  const aCount = Math.max(0, addCount || 0);
+  const nextCount = bCount + aCount;
+  if (nextCount <= 0) return { avg: 0, count: 0 };
+  const bAvg = Number.isFinite(baseAvg) ? baseAvg : 0;
+  const aAvg2 = Number.isFinite(addAvg) ? addAvg : 0;
+  return {
+    avg: (bAvg * bCount + aAvg2 * aCount) / nextCount,
+    count: nextCount,
+  };
+}
+
+/**
+ * 녹음 종료 시점: 통계 스냅샷 업서트
+ * - diff(카메라 vs VAD) 3초 이내일 때만 전송
+ * - payload 해시가 동일하면 skip
+ */
+export const uploadDailyStatsOnRecordingEnd = createAsyncThunk(
+  'speakingStats/uploadDailyStatsOnRecordingEnd',
+  async ({ cameraMs, vadMs }, { getState, rejectWithValue }) => {
+    try {
+      const state = getState();
+      const userEmail = state?.auth?.user?.email || state?.speakingStats?.userEmail;
+      if (!userEmail) return { skipped: true, reason: 'no_user' };
+
+      const dailyStats = state?.speakingStats?.dailyStats || {};
+      const session = state?.speakingStats?.currentSession || {};
+
+      const safeCameraMs = Math.max(0, Number(cameraMs) || 0);
+      const safeVadMs = Math.max(0, Number(vadMs) || 0);
+      const diffMs = Math.abs(safeCameraMs - safeVadMs);
+      if (diffMs > 3000) return { skipped: true, reason: 'diff_too_large', diffMs };
+
+      const date = dailyStats.date || getTodayKey();
+
+      // ===== 스냅샷(세션 누적분 포함) =====
+      const effectiveTotalRecordingTime =
+        (dailyStats.totalRecordingTime || 0) + (session.totalRecordingTime || 0);
+      const effectiveTotalSpeakingTime =
+        (dailyStats.totalSpeakingTime || 0) + (session.userSpeakingTime || 0);
+
+      const netDensity =
+        effectiveTotalRecordingTime > 0
+          ? (effectiveTotalSpeakingTime / effectiveTotalRecordingTime) * 100
+          : 0;
+
+      // PaceRatio: daily + session(평균/카운트) 합성
+      const paceMerged = safeWeightedAvg({
+        baseAvg: dailyStats.avgPaceRatio,
+        baseCount: dailyStats.paceRatioCount,
+        addAvg: session.paceRatioAvg,
+        addCount: session.paceRatioCount,
+      });
+
+      const effectiveDailyStats = {
+        ...dailyStats,
+        date,
+        totalRecordingTime: effectiveTotalRecordingTime,
+        totalSpeakingTime: effectiveTotalSpeakingTime,
+        // 세션 종료가 아니라 “녹음마다 업서트”라서 sessionsCount는 증가시키지 않음
+        sessionsCount: dailyStats.sessionsCount || 0,
+        practiceCount: (dailyStats.practiceCount || 0) + (session.paceRatioCount || 0),
+        avgNetSpeakingDensity: netDensity,
+        avgPaceRatio: paceMerged.avg,
+        paceRatioCount: paceMerged.count,
+        // responseQuality/latency는 dailyStats에서 이미 누적(더블카운트 방지)
+      };
+
+      const payload = {
+        ...mapDailyStatsToBackend(effectiveDailyStats, userEmail),
+      };
+
+      if (!shouldUploadStats(payload, userEmail, date)) {
+        return { skipped: true, reason: 'same_payload' };
+      }
+
+      await postDailyStats(payload);
+      const digest = calculatePayloadHash(payload);
+      saveLastSyncInfo(userEmail, date, digest);
+      return { success: true };
+    } catch (e) {
+      return rejectWithValue(e?.message || 'Failed to upload daily stats');
+    }
+  }
+);
+
 // 백엔드 저장은 세션 종료 시 POST /api/sessions/end를 통해 자동으로 이루어집니다.
 // 프론트엔드는 localStorage를 통한 로컬 캐싱만 수행합니다.
 
@@ -167,22 +273,23 @@ const speakingStatsSlice = createSlice({
       // dailyStats에 누적
       state.dailyStats.totalRecordingTime += session.totalRecordingTime;
       state.dailyStats.totalSpeakingTime += session.userSpeakingTime;
+      state.dailyStats.chatSpeakingTime += session.chatSpeakingTime || 0;
+      state.dailyStats.practiceSpeakingTime += session.practiceSpeakingTime || 0;
       state.dailyStats.sessionsCount += 1;
 
-      // Pace Ratio 누적 평균 계산 (메모리 누수 방지)
-      if (session.practiceRecords.length > 0) {
-        state.dailyStats.practiceCount += session.practiceRecords.length;
+      // Pace Ratio 누적 평균 계산 (배열 제거: 세션 평균/카운트로 합성)
+      if (session.paceRatioCount > 0) {
+        state.dailyStats.practiceCount += session.paceRatioCount;
 
-        // 누적 평균 방식으로 계산
-        session.practiceRecords.forEach((record) => {
-          const currentCount = state.dailyStats.paceRatioCount;
-          const currentAvg = state.dailyStats.avgPaceRatio;
+        const dailyCount = state.dailyStats.paceRatioCount;
+        const dailyAvg = state.dailyStats.avgPaceRatio;
+        const sessionCount = session.paceRatioCount;
+        const sessionAvg = session.paceRatioAvg;
 
-          // 새로운 평균 = (이전평균 × 이전개수 + 새값) / (이전개수 + 1)
-          state.dailyStats.avgPaceRatio =
-            (currentAvg * currentCount + record.paceRatio) / (currentCount + 1);
-          state.dailyStats.paceRatioCount = currentCount + 1;
-        });
+        const nextCount = dailyCount + sessionCount;
+        state.dailyStats.avgPaceRatio =
+          nextCount > 0 ? (dailyAvg * dailyCount + sessionAvg * sessionCount) / nextCount : 0;
+        state.dailyStats.paceRatioCount = nextCount;
       }
       // Response Quality는 addResponseQuality에서 일별 통계를 실시간 누적하므로 여기서는 누적하지 않음
 
@@ -216,6 +323,11 @@ const speakingStatsSlice = createSlice({
       const { deltaTime, isSpeaking } = action.payload;
       if (isSpeaking) {
         state.currentSession.userSpeakingTime += deltaTime;
+        if (state.currentSession.sessionType === 'chat') {
+          state.currentSession.chatSpeakingTime += deltaTime;
+        } else if (state.currentSession.sessionType === 'practice') {
+          state.currentSession.practiceSpeakingTime += deltaTime;
+        }
       }
     },
 
@@ -232,7 +344,13 @@ const speakingStatsSlice = createSlice({
           overallScore,
           timestamp: Date.now(),
         };
-        state.currentSession.responseQualities.push(record);
+        state.currentSession.lastResponseQuality = record;
+        // 세션 누적 평균(배열 제거)
+        const prevCount = state.currentSession.responseQualityCount || 0;
+        const prevAvg = state.currentSession.responseQualityAvg || 0;
+        state.currentSession.responseQualityAvg =
+          (prevAvg * prevCount + overallScore) / (prevCount + 1);
+        state.currentSession.responseQualityCount = prevCount + 1;
 
         // 일별 통계 누적 평균 계산 (메모리 누수 방지)
         if (!state.dailyStats.date) state.dailyStats.date = getTodayKey();
@@ -311,13 +429,13 @@ const speakingStatsSlice = createSlice({
         userTime > 0
       ) {
         const paceRatio = userTime / currentPractice.referenceAudioDuration;
-        state.currentSession.practiceRecords.push({
-          sentenceId: currentPractice.sentenceId,
-          paceRatio,
-          userTime,
-          refTime: currentPractice.referenceAudioDuration,
-          timestamp: Date.now(),
-        });
+        state.currentSession.lastPaceRatio = paceRatio;
+        // 세션 누적 평균(배열 제거)
+        const prevCount = state.currentSession.paceRatioCount || 0;
+        const prevAvg = state.currentSession.paceRatioAvg || 0;
+        state.currentSession.paceRatioAvg =
+          (prevAvg * prevCount + paceRatio) / (prevCount + 1);
+        state.currentSession.paceRatioCount = prevCount + 1;
       }
       // 리셋
       state.currentSession.currentPractice = {

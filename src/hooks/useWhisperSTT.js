@@ -5,6 +5,7 @@ import {
   setWhisperProgress,
   setWhisperError,
 } from '../store/slices/whisperPreloadSlice';
+import { enqueueDecode } from '../utils/postRecordingPipeline';
 
 // Whisper 모델: 기본은 small, 메모리 이슈 등 발생 시 base로 폴백
 // 필요 시 .env에 VITE_WHISPER_MODEL_ID로 오버라이드 가능
@@ -19,12 +20,28 @@ let sharedWorkerInitPromise = null;
 let sharedWorkerLastError = null;
 let msgIdSeq = 1;
 
+// Safari에서 반복 decodeAudioData 시 메모리 회수 이슈 완화:
+// - old_ui 방식 복원: 매번 독립 AudioContext 생성 + 즉시 close()
+// - 동시 decode는 postRecordingPipeline의 큐로 직렬화하여 피크를 낮춤
+
 function getWorker() {
   if (sharedWorker) return sharedWorker;
   sharedWorker = new Worker(new URL('../workers/whisperWorker.js', import.meta.url), {
     type: 'module',
   });
   return sharedWorker;
+}
+
+function resetWorker(reason = 'reset') {
+  try {
+    sharedWorker?.terminate?.();
+  } catch (_) {}
+  sharedWorker = null;
+  sharedWorkerReady = false;
+  sharedWorkerModelId = null;
+  sharedWorkerBackend = null;
+  sharedWorkerInitPromise = null;
+  sharedWorkerLastError = `worker reset: ${reason}`;
 }
 
 function resampleTo16k(input, inputSampleRate) {
@@ -142,34 +159,59 @@ async function decodeBlobToFloat32(
   blob,
   { trimThreshold = 'auto', trimPaddingSec = 0.08 } = {}
 ) {
-  const arrayBuffer = await blob.arrayBuffer();
+  let arrayBuffer = await blob.arrayBuffer();
+
+  // old_ui 방식: 매번 새 AudioContext 생성 + 즉시 close()
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   const ctx = new AudioCtx();
-  try {
+
+  const decodeOnce = async () => {
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    arrayBuffer = null; // 메모리 해제: arrayBuffer 더 이상 불필요
+    return audioBuffer;
+  };
+
+  try {
+    let audioBuffer = await enqueueDecode(decodeOnce);
     // mono mixdown (average all channels) — 일부 장치에서 ch0이 거의 무음인 케이스 방지
     const channels = Math.max(1, audioBuffer.numberOfChannels || 1);
     const length = audioBuffer.length || 0;
-    const mono = new Float32Array(length);
+    const sampleRate = audioBuffer.sampleRate;
+
+    let mono = new Float32Array(length);
     for (let ch = 0; ch < channels; ch++) {
       const data = audioBuffer.getChannelData(ch);
       for (let i = 0; i < length; i++) mono[i] += data[i];
     }
     for (let i = 0; i < length; i++) mono[i] /= channels;
 
+    // 메모리 해제 #0: audioBuffer 더 이상 불필요 (가장 큰 메모리 사용)
+    audioBuffer = null;
+
     let processed = removeDcOffset(mono);
-    const resampled = resampleTo16k(processed, audioBuffer.sampleRate);
+    mono = null; // 메모리 해제 #1: mono 버퍼 더 이상 불필요
+
+    // replay용: 녹음 타임라인과 정렬된 16k PCM(무트림)
+    const replay16k = resampleTo16k(processed, sampleRate);
+    processed = null; // 메모리 해제 #2: 첫 번째 processed 버퍼 해제
+
     // Decide trim threshold BEFORE normalization, so it tracks actual recording level/noise floor.
     const threshold =
       typeof trimThreshold === 'number'
         ? trimThreshold
-        : autoTrimThresholdByNoiseFloor(resampled, 16000);
+        : autoTrimThresholdByNoiseFloor(replay16k, 16000);
 
-    processed = normalizePeak(resampled, 0.9);
-    processed = trimSilence(processed, 16000, threshold, trimPaddingSec);
-    return { audio: processed, sampleRate: 16000 };
+    let normalized = normalizePeak(replay16k, 0.9);
+
+    const final = trimSilence(normalized, 16000, threshold, trimPaddingSec);
+    normalized = null; // 메모리 해제 #3: normalized 버퍼 해제
+
+    return { audio: final, sampleRate: 16000, replayPcm: replay16k, replaySampleRate: 16000 };
   } finally {
-    await ctx.close();
+    // ✅ old_ui 패턴: audioBuffer 사용 완료 후 close (메모리 누적 방지)
+    try {
+      await ctx.close();
+    } catch (_) {}
   }
 }
 
@@ -289,14 +331,14 @@ export function useWhisperSTT() {
   ) => {
     setError(null);
 
-    const runOnce = async (targetModelId, targetBackend) => {
+    const runOnce = async (targetModelId, targetBackend, promptOverride) => {
       const ok = await preload(targetModelId, targetBackend);
       if (!ok) {
         throw new Error(sharedWorkerLastError || 'STT 모델 로드 실패 (모델/wasm 다운로드 실패 가능)');
       }
 
       setStatus('loading');
-      const { audio, sampleRate } = await decodeBlobToFloat32(blob, { trimThreshold, trimPaddingSec });
+      const { audio, sampleRate, replayPcm, replaySampleRate } = await decodeBlobToFloat32(blob, { trimThreshold, trimPaddingSec });
 
       // 전처리 로그 추가
       const vadDuration = (audio.length/16000).toFixed(2);
@@ -314,8 +356,14 @@ export function useWhisperSTT() {
       const text = await new Promise((resolve, reject) => {
         pendingRef.current.set(id, { resolve, reject });
         // Transfer audio buffer for performance
+        const effectivePrompt =
+          typeof promptOverride === 'string'
+            ? promptOverride
+            : typeof prompt === 'string'
+              ? prompt
+              : null;
         worker.postMessage(
-          { id, type: 'transcribe', modelId: targetModelId, audio, sampleRate, prompt, backend: targetBackend, vad },
+          { id, type: 'transcribe', modelId: targetModelId, audio, sampleRate, prompt: effectivePrompt, backend: targetBackend, vad },
           [audio.buffer]
         );
       });
@@ -323,23 +371,45 @@ export function useWhisperSTT() {
       setStatus('ready');
       return {
         text,
-        vadDurationMs
+        vadDurationMs,
+        replayPcm,
+        replaySampleRate,
       };
     };
+
+    function isSuspiciousText(text, vadDurationMs) {
+      const t = String(text || '').trim();
+      if (!t) return true;
+      const lower = t.toLowerCase();
+      if (lower === 'you') return true;
+      // 오디오가 충분히 긴데 결과가 비정상적으로 짧으면 의심
+      if (t.length <= 3 && (vadDurationMs || 0) >= 2000) return true;
+      return false;
+    }
 
     const desiredBackend = backend === 'webgpu' ? 'webgpu' : 'wasm';
     const primaryModelId = modelIdRef.current;
 
     // 1) desired backend + small
     try {
-      return await runOnce(primaryModelId, desiredBackend);
+      const r1 = await runOnce(primaryModelId, desiredBackend, prompt);
+      if (!isSuspiciousText(r1?.text, r1?.vadDurationMs)) return r1;
+
+      // 1-1) suspicious -> retry once WITHOUT prompt (same backend)
+      const r2 = await runOnce(primaryModelId, desiredBackend, null);
+      if (!isSuspiciousText(r2?.text, r2?.vadDurationMs)) return r2;
+
+      // 1-2) still suspicious -> reset worker and retry once WITHOUT prompt
+      resetWorker('suspicious_text');
+      const r3 = await runOnce(primaryModelId, desiredBackend, null);
+      return r3;
     } catch (e1) {
       const msg1 = e1?.message || String(e1);
 
       // 2) webgpu -> wasm fallback (same model)
       if (desiredBackend === 'webgpu') {
         try {
-          return await runOnce(primaryModelId, 'wasm');
+          return await runOnce(primaryModelId, 'wasm', prompt);
         } catch (e2) {
           const msg2 = e2?.message || String(e2);
           // fall through to model fallback if memory-ish
@@ -352,11 +422,11 @@ export function useWhisperSTT() {
       // 3) memory-ish -> base fallback (smaller)
       if (isLikelyMemoryError(msg1) && primaryModelId !== FALLBACK_MODEL_ID) {
         try {
-          return await runOnce(FALLBACK_MODEL_ID, desiredBackend);
+          return await runOnce(FALLBACK_MODEL_ID, desiredBackend, prompt);
         } catch (e3) {
           const msg3 = e3?.message || String(e3);
           if (desiredBackend === 'webgpu') {
-            return await runOnce(FALLBACK_MODEL_ID, 'wasm');
+            return await runOnce(FALLBACK_MODEL_ID, 'wasm', prompt);
           }
           throw new Error(msg3);
         }
@@ -376,9 +446,10 @@ export function useWhisperSTT() {
 export function useWhisperGlobalPreload() {
   const dispatch = useDispatch();
 
-  const preloadGlobal = useCallback(async () => {
+  const preloadGlobal = useCallback(async (backend = 'webgpu') => {
+    const targetBackend = backend === 'webgpu' ? 'webgpu' : 'wasm';
     // 이미 준비되었으면 스킵
-    if (sharedWorkerReady && sharedWorkerModelId === DEFAULT_MODEL_ID && sharedWorkerBackend === 'webgpu') {
+    if (sharedWorkerReady && sharedWorkerModelId === DEFAULT_MODEL_ID && sharedWorkerBackend === targetBackend) {
       dispatch(setWhisperStatus('ready'));
       return true;
     }
@@ -389,7 +460,7 @@ export function useWhisperGlobalPreload() {
     }
 
     dispatch(setWhisperStatus('loading'));
-    dispatch(setWhisperProgress({ stage: 'init', percent: null, modelId: DEFAULT_MODEL_ID, message: '모델 준비 중... (webgpu)' }));
+    dispatch(setWhisperProgress({ stage: 'init', percent: null, modelId: DEFAULT_MODEL_ID, message: `모델 준비 중... (${targetBackend})` }));
 
     const worker = getWorker();
     const id = msgIdSeq++;
@@ -410,7 +481,7 @@ export function useWhisperGlobalPreload() {
       } else if (msg.type === 'ready') {
         sharedWorkerReady = true;
         sharedWorkerModelId = DEFAULT_MODEL_ID;
-        sharedWorkerBackend = 'webgpu';
+        sharedWorkerBackend = targetBackend;
         dispatch(setWhisperStatus('ready'));
         dispatch(setWhisperProgress(null));
         worker.removeEventListener('message', handleMessage);
@@ -456,7 +527,7 @@ export function useWhisperGlobalPreload() {
       };
 
       worker.addEventListener('message', wrappedHandler);
-      worker.postMessage({ id, type: 'init', modelId: DEFAULT_MODEL_ID, backend: 'webgpu' });
+      worker.postMessage({ id, type: 'init', modelId: DEFAULT_MODEL_ID, backend: targetBackend });
     });
 
     return sharedWorkerInitPromise;

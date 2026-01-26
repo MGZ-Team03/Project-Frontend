@@ -17,8 +17,8 @@ export default function ActivityDistributionChart({ data }) {
   return (
     <section className="bg-white dark:bg-[#1a242f] rounded-xl p-8 border border-[#dbe0e6] dark:border-gray-800 shadow-sm flex flex-col items-center">
       <div className="w-full text-left mb-6">
-        <h3 className="font-black text-xl text-[#111418] dark:text-white">Pronunciation Accuracy</h3>
-        <p className="text-sm text-[#617589] dark:text-gray-400">학습 활동 분포(임시)</p>
+        <h3 className="font-black text-xl text-[#111418] dark:text-white">학습 활동 분포</h3>
+        <p className="text-sm text-[#617589] dark:text-gray-400">발화시간 기준 · 문장 연습 vs AI 대화 비중</p>
       </div>
 
       <div className="flex flex-col sm:flex-row items-center gap-6 w-full">

@@ -35,6 +35,8 @@ let currentModelId = null;
 let activeRequestId = null;
 let lastProgressSentAt = 0;
 let currentBackend = 'wasm'; // 'wasm' | 'webgpu'
+let inferenceCount = 0; // Track number of inferences
+const MAX_INFERENCES_BEFORE_RELOAD = 5; // Reload model after N inferences to prevent memory accumulation
 
 function postProgress(payload) {
   // throttle to avoid flooding main thread
@@ -55,6 +57,13 @@ function evictAllExcept(keepKey) {
   for (const k of loadingCache.keys()) {
     if (k !== keepKey) loadingCache.delete(k);
   }
+}
+
+function forceEvictAll() {
+  console.log('[Whisper Worker] 강제 모델 캐시 제거 (메모리 누수 방지)');
+  asrCache.clear();
+  loadingCache.clear();
+  inferenceCount = 0;
 }
 
 function configureBackend(backend) {
@@ -201,8 +210,24 @@ self.onmessage = async (event) => {
           : {}),
       };
 
+      console.log('[Whisper Worker] 추론 시작:', {
+        audioLength: audioArray.length,
+        modelId: msg.modelId,
+        backend,
+        cacheSize: asrCache.size,
+        inferenceCount: inferenceCount + 1,
+      });
+
+      // 모델 로드 (5번째 이후에는 백그라운드에서 정리되므로 캐시 없음)
       const model = await loadModel({ modelId: msg.modelId, quantized: true, backend });
-      const result = await model(audioArray, tunedOptions);
+      let result = await model(audioArray, tunedOptions);
+
+      // 추론 횟수 증가
+      inferenceCount++;
+
+      // 메모리 해제: audioArray는 더 이상 불필요 (transfer로 받은 것이므로 이미 detached 상태)
+      // audioArray = null; // 이미 detached된 상태이므로 명시적 null 설정은 무의미
+
       const text = extractText(result);
 
       // 결과 로그 추가
@@ -211,13 +236,45 @@ self.onmessage = async (event) => {
         text: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
         resultType: typeof result,
         hasChunks: Array.isArray(result?.chunks),
+        chunksCount: result?.chunks?.length,
       });
 
       if (!text || text.trim().length === 0) {
         console.warn('[Whisper Worker] ⚠️ 빈 결과 반환됨. 원본 result:', result);
       }
 
+      // 메모리 해제: result 객체는 매우 큼 (chunks, segments 등 포함)
+      // chunks 배열 명시적 해제 (큰 메모리 차지)
+      if (result?.chunks) {
+        result.chunks.length = 0; // 배열 내용 먼저 제거
+        result.chunks = null;
+      }
+      if (result?.segments) {
+        result.segments.length = 0;
+        result.segments = null;
+      }
+      if (result?.items) {
+        result.items.length = 0;
+        result.items = null;
+      }
+      result = null;
+
+      console.log('[Whisper Worker] 메모리 정리 완료, 결과 전송 (inferenceCount:', inferenceCount, ')');
+
       self.postMessage({ id, type: 'result', text });
+
+      // ✅ 결과 전송 **후** 백그라운드에서 모델 정리 (사용자 대기 없음)
+      if (inferenceCount >= MAX_INFERENCES_BEFORE_RELOAD) {
+        console.log('[Whisper Worker] 추론 횟수 임계값 도달, 다음 추론 전에 모델 재로드됩니다');
+        // 다음 이벤트 루프에서 정리 (결과 전송 지연 방지)
+        setTimeout(() => {
+          console.log('[Whisper Worker] 백그라운드 모델 캐시 정리 시작');
+          forceEvictAll();
+          inferenceCount = 0; // 카운터 리셋
+          console.log('[Whisper Worker] 백그라운드 모델 캐시 정리 완료');
+        }, 100);  // 100ms 후 정리 (결과 전송 완료 보장)
+      }
+
       return;
     }
 

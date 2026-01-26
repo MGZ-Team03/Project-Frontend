@@ -18,6 +18,22 @@ export function createPcmRecorder(stream, { channelCount = 1 } = {}) {
   let startedAt = Date.now();
   let stopped = false;
 
+  function release() {
+    try {
+      processor.onaudioprocess = null;
+    } catch (_) {}
+    try {
+      processor.disconnect();
+    } catch (_) {}
+    try {
+      source.disconnect();
+    } catch (_) {}
+    // drop refs for GC (Safari 특히 중요)
+    try {
+      chunks.length = 0;
+    } catch (_) {}
+  }
+
   processor.onaudioprocess = (e) => {
     if (stopped) return;
     const input = e.inputBuffer.getChannelData(0);
@@ -32,26 +48,35 @@ export function createPcmRecorder(stream, { channelCount = 1 } = {}) {
   async function stop() {
     if (stopped) return null;
     stopped = true;
-    try {
-      processor.disconnect();
-    } catch (_) {}
-    try {
-      source.disconnect();
-    } catch (_) {}
+    release();
     try {
       await ctx.close();
     } catch (_) {}
 
     const sampleRate = ctx.sampleRate || 48000;
     const pcm = concatFloat32(chunks);
+    // free chunk memory ASAP after concat
+    try {
+      chunks.length = 0;
+    } catch (_) {}
     return float32ToWavBlob(pcm, sampleRate, channelCount);
+  }
+
+  // 녹음 중단/언마운트용: WAV 변환 없이 리소스만 정리 (메모리 피크 방지)
+  async function cancel() {
+    if (stopped) return;
+    stopped = true;
+    release();
+    try {
+      await ctx.close();
+    } catch (_) {}
   }
 
   function getDurationMs() {
     return Math.max(0, Date.now() - (startedAt || Date.now()));
   }
 
-  return { stop, getDurationMs };
+  return { stop, cancel, getDurationMs };
 }
 
 function concatFloat32(chunks) {
