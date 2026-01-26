@@ -21,6 +21,7 @@ import ProfilePage from './pages/student/ProfilePage';
 // Pages - Tutor
 import DashboardPage from './pages/tutor/DashboardPage';
 import StudentDetailPage from './pages/tutor/StudentDetailPage';
+import TutorProfilePage from './pages/tutor/ProfilePage';
 
 // Components
 import ProtectedRoute from './components/common/ProtectedRoute';
@@ -103,6 +104,11 @@ function AppContent() {
       <Route path="/tutor/stats" element={
         <ProtectedRoute allowedRoles={['tutor']}>
           <DashboardPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/tutor/profile" element={
+        <ProtectedRoute allowedRoles={['tutor']}>
+          <TutorProfilePage />
         </ProtectedRoute>
       } />
 
