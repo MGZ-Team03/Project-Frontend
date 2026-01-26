@@ -1,28 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSelector } from 'react-redux';
-import {
-  Box,
-  Card,
-  CardContent,
-  Typography,
-  Stack,
-  Avatar,
-  IconButton,
-  Badge,
-  Fab,
-  Alert,
-  Chip,
-} from '@mui/material';
-import {
-  Person,
-  VolumeUp,
-  Notifications,
-  Close,
-  CheckCircle,
-  NotificationsOff,
-  OpenInFull,
-  VolumeOff,
-} from '@mui/icons-material';
 import ws from '../../config/webSocketConfig';
 import { useTTSAudio } from '../../hooks/useTTSAudio';
 
@@ -245,298 +222,206 @@ export default function TutorFeedbackOverlay() {
     setUnreadCount(0);
   };
 
+  // 시간 포맷
+  const formatTime = (timestamp) => {
+    return new Date(timestamp).toLocaleString('ko-KR', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
   return (
     <>
       {/* 우측 하단 FAB 버튼 */}
-      <Fab
+      <button
         data-testid="fab-button"
-        color="primary"
-        sx={{
-          position: 'fixed',
-          bottom: 24,
-          right: 24,
-          zIndex: 1300,
-          boxShadow: 4,
-          '&:hover': {
-            boxShadow: 8,
-          },
-        }}
         onClick={() => setIsExpanded(!isExpanded)}
+        className="fixed bottom-6 right-6 z-[1300] size-14 rounded-full bg-[#137fec] text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
       >
-        <Badge 
-          badgeContent={unreadCount} 
-          color="error"
-          max={99}
-        >
-          <Notifications />
-        </Badge>
-      </Fab>
+        <span className="material-symbols-outlined text-2xl">notifications</span>
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 size-6 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center border-2 border-white">
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
+        )}
+      </button>
 
       {/* 피드백 패널 */}
-      <Box
+      <div
         ref={panelRef}
-        sx={{
-          position: 'fixed',
-          bottom: isExpanded ? 90 : -600,
-          right: 24,
-          width: 420,
-          maxHeight: 550,
-          zIndex: 1300,
-          transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-          boxShadow: 10,
-        }}
+        className={`fixed right-6 w-[400px] max-h-[550px] z-[1300] transition-all duration-300 ease-out shadow-2xl rounded-xl overflow-hidden ${
+          isExpanded ? 'bottom-24 opacity-100 translate-y-0' : '-bottom-[600px] opacity-0 translate-y-4'
+        }`}
       >
-        <Card elevation={12}>
-          <CardContent sx={{ p: 0 }}>
-            {/* 헤더 */}
-            <Box
-              sx={{
-                p: 2,
-                bgcolor: '#ff9800',
-                color: 'white',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Notifications />
-                <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                  튜터 피드백
-                </Typography>
-                {!isConnected && (
-                  <Chip
-                    label="연결 안됨"
-                    size="small"
-                    sx={{ bgcolor: 'rgba(255,255,255,0.3)', color: 'white' }}
-                  />
-                )}
-              </Stack>
-              
-              <Stack direction="row" spacing={0.5}>
-                {/* 방해금지 모드 */}
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    color: 'white',
-                    bgcolor: doNotDisturb ? 'rgba(255,255,255,0.3)' : 'transparent',
-                  }}
-                  onClick={() => {
-                    const newDND = !doNotDisturb;
-                    setDoNotDisturb(newDND);
-                    // 방해금지 모드 ON 시 자동확장과 TTS도 OFF
-                    if (newDND) {
-                      setAutoExpand(false);
-                      setAutoPlayTTS(false);
-                    }
-                  }}
-                  title={doNotDisturb ? '방해금지 모드 켜짐' : '방해금지 모드 끄기'}
-                >
-                  {doNotDisturb ? <NotificationsOff fontSize="small" /> : <Notifications fontSize="small" />}
-                </IconButton>
-                
-                {/* 자동 패널 확장 */}
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    color: 'white',
-                    bgcolor: autoExpand ? 'rgba(255,255,255,0.3)' : 'transparent',
-                    opacity: doNotDisturb ? 0.5 : 1,
-                  }}
-                  onClick={() => {
-                    // 방해금지 모드일 때는 자동확장 켤 수 없음
-                    if (!doNotDisturb) {
-                      setAutoExpand(!autoExpand);
-                    }
-                  }}
-                  title={doNotDisturb ? '방해금지 모드에서는 사용 불가' : (autoExpand ? '자동 확장 켜짐' : '자동 확장 끄기')}
-                >
-                  <OpenInFull fontSize="small" />
-                </IconButton>
-                
-                {/* TTS 자동재생 */}
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    color: 'white',
-                    bgcolor: autoPlayTTS ? 'rgba(255,255,255,0.3)' : 'transparent',
-                    opacity: doNotDisturb ? 0.5 : 1,
-                  }}
-                  onClick={() => {
-                    // 방해금지 모드일 때는 TTS 자동재생 켤 수 없음
-                    if (!doNotDisturb) {
-                      setAutoPlayTTS(!autoPlayTTS);
-                    }
-                  }}
-                  title={doNotDisturb ? '방해금지 모드에서는 사용 불가' : (autoPlayTTS ? 'TTS 자동재생 켜짐' : 'TTS 자동재생 끄기')}
-                >
-                  {autoPlayTTS ? <VolumeUp fontSize="small" /> : <VolumeOff fontSize="small" />}
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ color: 'white' }}
-                  onClick={() => setIsExpanded(false)}
-                  title="닫기"
-                >
-                  <Close fontSize="small" />
-                </IconButton>
-              </Stack>
-            </Box>
-
-            {/* WebSocket 연결 상태 */}
-            {wsError && (
-              <Alert severity="error" sx={{ m: 2, mb: 0 }}>
-                {wsError}
-              </Alert>
-            )}
-
-            {/* 피드백 리스트 */}
-            <Box
-              sx={{
-                maxHeight: 450,
-                overflowY: 'auto',
-                p: 2,
-                bgcolor: '#fafafa',
-              }}
-            >
-              <Stack spacing={1.5}>
-                {feedbacks.length === 0 ? (
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      py: 6,
-                      color: 'text.secondary',
-                    }}
-                  >
-                    <Notifications sx={{ fontSize: 60, opacity: 0.3, mb: 2 }} />
-                    <Typography variant="body2" textAlign="center">
-                      아직 피드백이 없습니다
-                    </Typography>
-                    <Typography variant="caption" textAlign="center" sx={{ mt: 0.5 }}>
-                      튜터가 보내는 피드백이 여기에 표시됩니다
-                    </Typography>
-                  </Box>
-                ) : (
-                  feedbacks.map((fb, idx) => (
-                    <Card
-                      key={idx}
-                      sx={{
-                        bgcolor: fb.isRead ? 'white' : '#fff3e0',
-                        border: fb.isRead ? 'none' : '2px solid #ff9800',
-                        transition: 'all 0.3s ease',
-                        '&:hover': {
-                          boxShadow: 3,
-                        },
-                      }}
-                    >
-                      <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                        <Stack direction="row" spacing={1.5} alignItems="flex-start">
-                          <Avatar
-                            sx={{
-                              bgcolor: '#ff9800',
-                              width: 40,
-                              height: 40,
-                            }}
-                          >
-                            <Person />
-                          </Avatar>
-                          
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            {/* 튜터 이메일 */}
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ display: 'block', mb: 0.5 }}
-                            >
-                              {fb.tutor_email || '튜터'}
-                            </Typography>
-                            
-                            {/* 피드백 메시지 */}
-                            <Typography
-                              variant="body1"
-                              sx={{
-                                wordBreak: 'break-word',
-                                whiteSpace: 'pre-wrap',
-                                mb: 0.5,
-                              }}
-                            >
-                              {fb.message}
-                            </Typography>
-                            
-                            {/* 타임스탬프 */}
-                            <Typography variant="caption" color="text.secondary">
-                              {new Date(fb.timestamp || fb.receivedAt).toLocaleString('ko-KR', {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </Typography>
-                            
-                            {/* 메시지 타입 */}
-                            {fb.message_type && (
-                              <Chip
-                                label={fb.message_type === 'tts' ? 'TTS' : '텍스트'}
-                                size="small"
-                                sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
-                              />
-                            )}
-                          </Box>
-                          
-                          {/* 오디오 재생 버튼 */}
-                          <IconButton
-                            size="small"
-                            onClick={() => handlePlayAudio(fb.message, fb.audio_url)}
-                            sx={{ color: '#ff9800' }}
-                            title="음성으로 듣기"
-                          >
-                            <VolumeUp fontSize="small" />
-                          </IconButton>
-                        </Stack>
-                      </CardContent>
-                    </Card>
-                  ))
-                )}
-              </Stack>
-            </Box>
-
-            {/* 연결 상태 표시 */}
-            <Box
-              sx={{
-                p: 1,
-                bgcolor: isConnected ? '#e8f5e9' : '#ffebee',
-                borderTop: 1,
-                borderColor: 'divider',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 1,
-              }}
-            >
-              <Box
-                sx={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  bgcolor: isConnected ? '#4caf50' : '#f44336',
-                  animation: isConnected ? 'pulse 2s infinite' : 'none',
-                  '@keyframes pulse': {
-                    '0%, 100%': { opacity: 1 },
-                    '50%': { opacity: 0.5 },
-                  },
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col h-[550px]">
+          {/* 헤더 */}
+          <div className="bg-[#137fec] p-4 flex items-center justify-between text-white shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-full bg-white/20 flex items-center justify-center">
+                <span className="material-symbols-outlined">school</span>
+              </div>
+              <div>
+                <h4 className="font-bold text-sm leading-tight">튜터 피드백</h4>
+                <p className="text-[10px] text-white/80 uppercase tracking-wider font-bold flex items-center gap-1">
+                  <span className={`size-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></span>
+                  {isConnected ? '실시간 연결 중' : '연결 안됨'}
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-1">
+              {/* 방해금지 모드 */}
+              <button
+                onClick={() => {
+                  const newDND = !doNotDisturb;
+                  setDoNotDisturb(newDND);
+                  if (newDND) {
+                    setAutoExpand(false);
+                    setAutoPlayTTS(false);
+                  }
                 }}
-              />
-              <Typography variant="caption" color={isConnected ? 'success.main' : 'error.main'}>
-                {isConnected ? '실시간 연결 중' : '연결 안됨'}
-              </Typography>
-            </Box>
-          </CardContent>
-        </Card>
-      </Box>
+                className={`size-8 rounded-lg flex items-center justify-center transition-colors ${
+                  doNotDisturb ? 'bg-white/30' : 'hover:bg-white/20'
+                }`}
+                title={doNotDisturb ? '방해금지 모드 켜짐' : '방해금지 모드 끄기'}
+              >
+                <span className="material-symbols-outlined text-lg">
+                  {doNotDisturb ? 'notifications_off' : 'notifications'}
+                </span>
+              </button>
+              
+              {/* 자동 패널 확장 */}
+              <button
+                onClick={() => !doNotDisturb && setAutoExpand(!autoExpand)}
+                className={`size-8 rounded-lg flex items-center justify-center transition-colors ${
+                  autoExpand ? 'bg-white/30' : 'hover:bg-white/20'
+                } ${doNotDisturb ? 'opacity-50 cursor-not-allowed' : ''}`}
+                title={doNotDisturb ? '방해금지 모드에서는 사용 불가' : (autoExpand ? '자동 확장 켜짐' : '자동 확장 끄기')}
+              >
+                <span className="material-symbols-outlined text-lg">open_in_full</span>
+              </button>
+              
+              {/* TTS 자동재생 */}
+              <button
+                onClick={() => !doNotDisturb && setAutoPlayTTS(!autoPlayTTS)}
+                className={`size-8 rounded-lg flex items-center justify-center transition-colors ${
+                  autoPlayTTS ? 'bg-white/30' : 'hover:bg-white/20'
+                } ${doNotDisturb ? 'opacity-50 cursor-not-allowed' : ''}`}
+                title={doNotDisturb ? '방해금지 모드에서는 사용 불가' : (autoPlayTTS ? 'TTS 자동재생 켜짐' : 'TTS 자동재생 끄기')}
+              >
+                <span className="material-symbols-outlined text-lg">
+                  {autoPlayTTS ? 'volume_up' : 'volume_off'}
+                </span>
+              </button>
+              
+              {/* 닫기 */}
+              <button
+                onClick={() => setIsExpanded(false)}
+                className="size-8 rounded-lg flex items-center justify-center hover:bg-white/20 transition-colors"
+                title="닫기"
+              >
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            </div>
+          </div>
+
+          {/* WebSocket 에러 */}
+          {wsError && (
+            <div className="mx-4 mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400 text-sm">
+              {wsError}
+            </div>
+          )}
+
+          {/* 메시지 영역 */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-950/50">
+            {/* 날짜 구분선 */}
+            <div className="text-center">
+              <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest bg-white dark:bg-slate-900 px-3 py-1 rounded-full border border-slate-100 dark:border-slate-800">
+                오늘
+              </span>
+            </div>
+
+            {feedbacks.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+                <span className="material-symbols-outlined text-5xl mb-3 opacity-30">chat_bubble_outline</span>
+                <p className="text-sm font-medium">아직 피드백이 없습니다</p>
+                <p className="text-xs mt-1">튜터가 보내는 피드백이 여기에 표시됩니다</p>
+              </div>
+            ) : (
+              feedbacks.map((fb, idx) => (
+                <div key={idx} className="flex items-start gap-3 animate-in fade-in slide-in-from-bottom-2">
+                  {/* 튜터 아바타 */}
+                  <div className="size-9 rounded-full bg-[#137fec] flex items-center justify-center text-white text-sm font-bold shrink-0">
+                    T
+                  </div>
+                  
+                  {/* 메시지 내용 */}
+                  <div className="flex-1 min-w-0">
+                    {/* 튜터 이메일 */}
+                    <p className="text-[10px] text-slate-400 font-medium mb-1 truncate">
+                      {fb.tutor_email || '튜터'}
+                    </p>
+                    
+                    {/* 말풍선 */}
+                    <div className={`p-3 rounded-xl rounded-tl-none border shadow-sm transition-all ${
+                      fb.isRead 
+                        ? 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700' 
+                        : 'bg-blue-50 dark:bg-blue-900/20 border-[#137fec]/30'
+                    }`}>
+                      <p className="text-sm text-slate-800 dark:text-slate-200 break-words whitespace-pre-wrap">
+                        {fb.message}
+                      </p>
+                    </div>
+                    
+                    {/* 시간 및 타입 */}
+                    <div className="flex items-center gap-2 mt-1.5 ml-1">
+                      <span className="text-[10px] text-slate-400">
+                        {formatTime(fb.timestamp || fb.receivedAt)}
+                      </span>
+                      {fb.messageType === 'tts' && (
+                        <span className="text-[9px] bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded font-bold uppercase">
+                          TTS
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* 오디오 재생 버튼 */}
+                  <button
+                    onClick={() => handlePlayAudio(fb.message, fb.audio_url)}
+                    className="size-8 rounded-lg bg-slate-100 dark:bg-slate-800 text-[#137fec] hover:bg-[#137fec] hover:text-white transition-colors flex items-center justify-center shrink-0"
+                    title="음성으로 듣기"
+                  >
+                    <span className="material-symbols-outlined text-lg">volume_up</span>
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* 하단 연결 상태 바 */}
+          <div className={`px-4 py-2 border-t flex items-center justify-center gap-2 shrink-0 ${
+            isConnected 
+              ? 'bg-green-50 dark:bg-green-900/10 border-green-100 dark:border-green-900/30' 
+              : 'bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/30'
+          }`}>
+            <span className={`size-2 rounded-full animate-pulse ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
+            <span className={`text-xs font-medium ${isConnected ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+              {isConnected ? '실시간 연결 중' : '연결 안됨'}
+            </span>
+            {feedbacks.length > 0 && (
+              <button
+                onClick={handleClearAll}
+                className="ml-auto text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+              >
+                모두 지우기
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </>
   );
 }

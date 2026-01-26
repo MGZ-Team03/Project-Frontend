@@ -1,20 +1,14 @@
 import { useNavigate } from 'react-router-dom';
-import StudentLayout from '../../components/common/StudentLayout';
+import TutorLayout from '../../components/common/TutorLayout';
 import useProfileForm from '../../hooks/useProfileForm';
 import ProfileImageSection from '../../components/profile/ProfileImageSection';
 import ProfileToast from '../../components/profile/ProfileToast';
 import ReadOnlyField from '../../components/profile/ReadOnlyField';
 import ProfileFormActions from '../../components/profile/ProfileFormActions';
 
-const LEVELS = [
-  { value: 'beginner', label: '하 (초급)' },
-  { value: 'intermediate', label: '중 (중급)' },
-  { value: 'advanced', label: '상 (고급)' },
-];
+const THEME_COLOR = '#137fec';
 
-const THEME_COLOR = '#2b8cee';
-
-export default function ProfilePage() {
+export default function TutorProfilePage() {
   const navigate = useNavigate();
   
   const {
@@ -36,18 +30,16 @@ export default function ProfilePage() {
     setError,
   } = useProfileForm();
 
-  const getLevelLabel = () => {
-    const level = LEVELS.find(l => l.value === user?.learningLevel);
-    return level?.label || '분석 중...';
-  };
-
   return (
-    <StudentLayout>
+    <TutorLayout
+      title="Profile Settings"
+      subtitle="Manage your account"
+    >
       <div className="max-w-[600px] mx-auto">
-        <div className="bg-white dark:bg-[#1a202c] rounded-2xl shadow-sm border border-slate-200 dark:border-[#2d3748] overflow-hidden">
-          <div className="border-b border-slate-100 dark:border-[#2d3748] p-8">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="border-b border-slate-100 dark:border-slate-800 p-8">
             <h3 className="text-2xl font-black text-[#111418] dark:text-white tracking-tight">프로필 설정</h3>
-            <p className="text-slate-500 dark:text-[#a0aec0] mt-1">개인 정보를 업데이트하세요.</p>
+            <p className="text-slate-500 dark:text-slate-400 mt-1">개인 정보를 업데이트하세요.</p>
           </div>
 
           <div className="p-8 space-y-8">
@@ -61,6 +53,7 @@ export default function ProfilePage() {
               onImageChange={handleImageChange}
               onRemoveImage={handleRemoveImage}
               themeColor={THEME_COLOR}
+              defaultInitial="T"
             />
 
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -71,7 +64,7 @@ export default function ProfilePage() {
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="이름을 입력하세요"
-                  className="w-full rounded-lg border border-slate-200 dark:border-[#4a5568] bg-white dark:bg-[#2d3748] text-[#111418] dark:text-white focus:ring-2 focus:ring-[#2b8cee]/20 focus:border-[#2b8cee] transition-all h-12 px-4 text-sm"
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[#111418] dark:text-white focus:ring-2 focus:ring-[#137fec]/20 focus:border-[#137fec] transition-all h-12 px-4 text-sm"
                   required
                 />
               </div>
@@ -82,23 +75,22 @@ export default function ProfilePage() {
               />
 
               <ReadOnlyField
-                label="학습 레벨 (AI 분석)"
-                value={getLevelLabel()}
-                description="전월 학습 데이터를 기반으로 자동 산출됩니다"
+                label="역할"
+                value="튜터"
               />
 
-              <div className="bg-[#2b8cee]/5 dark:bg-[#2b8cee]/10 border border-[#2b8cee]/20 rounded-xl p-4 flex gap-4">
-                <span className="material-symbols-outlined text-[#2b8cee]">auto_awesome</span>
-                <p className="text-sm text-slate-600 dark:text-[#a0aec0]">
-                  <strong className="text-[#111418] dark:text-white">AI 안내:</strong>{' '}
-                  학습 레벨은 지난달 학습 데이터를 분석하여 자동으로 산출됩니다.
+              <div className="bg-[#137fec]/5 dark:bg-[#137fec]/10 border border-[#137fec]/20 rounded-xl p-4 flex gap-4">
+                <span className="material-symbols-outlined text-[#137fec]">school</span>
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  <strong className="text-[#111418] dark:text-white">튜터 안내:</strong>{' '}
+                  담당 학생들의 학습 현황을 확인하고 실시간 피드백을 전달할 수 있습니다.
                 </p>
               </div>
             </form>
           </div>
 
           <ProfileFormActions
-            onCancel={() => navigate('/home')}
+            onCancel={() => navigate('/tutor/dashboard')}
             onSubmit={handleSubmit}
             loading={loading}
             uploading={uploading}
@@ -114,6 +106,6 @@ export default function ProfilePage() {
         onSuccessClose={() => setSuccess(false)}
         onErrorClose={() => setError(null)}
       />
-    </StudentLayout>
+    </TutorLayout>
   );
 }

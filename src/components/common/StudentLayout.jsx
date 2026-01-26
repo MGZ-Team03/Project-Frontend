@@ -141,7 +141,7 @@ export default function StudentLayout({
   };
 
   return (
-    <div className="bg-background-light dark:bg-background-dark text-[#111418] dark:text-white min-h-screen">
+    <div className="bg-background-light dark:bg-background-dark text-[#111418] dark:text-white min-h-screen select-none">
       <div className="flex h-screen w-full overflow-hidden">
         {/* Sidebar */}
         <aside
