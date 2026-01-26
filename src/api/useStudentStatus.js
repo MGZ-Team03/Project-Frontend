@@ -1,4 +1,4 @@
-import {useCallback, useEffect} from "react";
+import {useCallback, useEffect, useRef} from "react";
 import api from "./axios";
 
 // 훅과 별도로 상태 전송 함수 export
@@ -16,17 +16,18 @@ export const sendStudentStatus = async (userEmail, tutorEmail, page) => {
         }
     }
 
-    console.log(payload);
+    console.log('[sendStudentStatus] payload:', payload);
 
     try {
-        const {data} = await api.post("/api/student-status", payload);
+        const {data} = await api.post("https://vaf6in8xz0.execute-api.ap-northeast-2.amazonaws.com/Dev/api/student-status", payload);
         return data;
     } catch (error) {
+        console.error('[sendStudentStatus] error:', error);
         throw error;
     }
 };
 
-export const sendStudentStatusSync = async (userEmail, tutorEmail) => {
+export const sendStudentStatusSync = async (userEmail, tutorEmail, pathname) => {
     if (!userEmail) {
         return null;
     }
@@ -41,82 +42,82 @@ export const sendStudentStatusSync = async (userEmail, tutorEmail) => {
         }
     };
 
-    console.log("브라우저 종료 이벤트 실행", payload);
-
-    const blob = new Blob([JSON.stringify(payload)], {
-        type: 'application/json'
-    });
+    console.log("[sendStudentStatusSync] payload:", payload);
 
     try {
-        const {data} = await api.post("/api/student-status", payload);
+        const {data} = await api.post("https://vaf6in8xz0.execute-api.ap-northeast-2.amazonaws.com/Dev/api/student-status", payload);
         return data;
     } catch (error) {
+        console.error('[sendStudentStatusSync] error:', error);
         throw error;
     }
-    return success;
 }
 
-export const useStudentStatus = (user, page) => {
-    console.log("useStudentStatus 훅 실행");
+export const useStudentStatus = (user, pathname) => {
+    // pathname이 문자열인지 확인하고, 아니면 추출
+    const currentPath = typeof pathname === 'string' ? pathname : pathname?.pathname || '/';
 
-    const sendStatus = useCallback(async () => {
-        return sendStudentStatus(user?.email, user?.tutorEmail, page?.pathname || page);
-    }, [user?.email, user?.tutorEmail, page]);
+    // 중복 호출 방지를 위한 ref
+    const lastSentPathRef = useRef(null);
+    const isHiddenRef = useRef(false);
+    const isMountedRef = useRef(false);
 
+    // pathname 변경 시에만 상태 전송
     useEffect(() => {
-        sendStatus();
-    }, [sendStatus]);
+        // 마운트 직후 첫 실행 또는 pathname이 실제로 변경된 경우만
+        if (!isMountedRef.current) {
+            isMountedRef.current = true;
+            lastSentPathRef.current = currentPath;
+
+            if (user?.email) {
+                console.log('[useStudentStatus] Initial mount, sending status for:', currentPath);
+                sendStudentStatus(user.email, user.tutorEmail, currentPath);
+            }
+            return;
+        }
+
+        // pathname이 변경되지 않았으면 실행 안 함
+        if (lastSentPathRef.current === currentPath) {
+            return;
+        }
+
+        console.log('[useStudentStatus] Path changed:', lastSentPathRef.current, '->', currentPath);
+        lastSentPathRef.current = currentPath;
+
+        if (user?.email) {
+            sendStudentStatus(user.email, user.tutorEmail, currentPath);
+        }
+    }, [currentPath, user?.email, user?.tutorEmail]);
 
     // 브라우저 종료 또는 탭 닫기 감지
     useEffect(() => {
-        const handleBeforeUnload = () => {
-            if (user?.email) {
-                sendStudentStatusSync(user.email, user.tutorEmail);
-            }
-        };
-
         const handleVisibilityChange = () => {
-            if (user?.email) {
-                if (document.visibilityState === 'hidden') {
-                    // 탭을 떠날 때 - inactive
-                    sendStudentStatusSync(user.email, user.tutorEmail);
-                } else if (document.visibilityState === 'visible') {
-                    // 탭으로 돌아올 때 - active
-                    sendStudentStatus(user.email, user.tutorEmail, page?.pathname || page);
-                }else{
+            if (!user?.email) return;
 
-                }
+            if (document.visibilityState === 'hidden' && !isHiddenRef.current) {
+                isHiddenRef.current = true;
+                console.log('[useStudentStatus] Tab hidden, sending logout');
+                sendStudentStatusSync(user.email, user.tutorEmail, currentPath);
+            }
+
+            if (document.visibilityState === 'visible' && isHiddenRef.current) {
+                isHiddenRef.current = false;
+                console.log('[useStudentStatus] Tab visible, sending active status');
+                sendStudentStatus(user.email, user.tutorEmail, currentPath);
             }
         };
 
-        window.addEventListener('beforeunload', handleBeforeUnload);
         document.addEventListener('visibilitychange', handleVisibilityChange);
-
         return () => {
-            window.removeEventListener('beforeunload', handleBeforeUnload);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
-    }, [user?.email, user?.tutorEmail]);
+    }, [user?.email, user?.tutorEmail, currentPath]);
+
+    // 수동 호출용 함수 제공
+    const sendStatus = useCallback(async () => {
+        if (!user?.email) return null;
+        return sendStudentStatus(user.email, user.tutorEmail, currentPath);
+    }, [user?.email, user?.tutorEmail, currentPath]);
 
     return {sendStatus};
 }
-export const sendStudentStatusBeacon = (userEmail, tutorEmail) => {
-    if (!userEmail) return;
-
-    const url = "/api/student-status";
-    const payload = JSON.stringify({
-        action: "/logout",
-        data: {
-            browser: "종료",
-            studentEmail: userEmail,
-            status: "inactive",
-            room: "no room",
-        }
-    });
-
-    // Blob 형식을 사용하여 전송 (CORS 이슈 방지를 위해 type 설정)
-    const blob = new Blob([payload], { type: 'application/json' });
-
-    // Beacon은 브라우저가 종료되어도 백그라운드에서 전송을 완료합니다.
-    navigator.sendBeacon(url, blob);
-};

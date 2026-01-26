@@ -154,7 +154,7 @@ export default function PracticePage() {
   const [practiceSessionId, setPracticeSessionId] = useState(null);
   const lastLoadKeyRef = useRef(null);
 
-  useStudentStatus(user, location);
+  useStudentStatus(user, location.pathname);
 
   // Hooks
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(

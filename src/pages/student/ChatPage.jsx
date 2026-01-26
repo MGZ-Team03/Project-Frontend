@@ -186,8 +186,8 @@ export default function ChatPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sttError, setSttError] = useState(null);
 
-  console.log("user ", user)
-  useStudentStatus(user, location);
+  // console.log("user ", user)
+  useStudentStatus(user, location.pathname);
 
   // Hooks - MediaPipe
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
