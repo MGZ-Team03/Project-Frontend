@@ -181,22 +181,29 @@ export const updateProfile = async (profileData) => {
 };
 
 // 프로필 이미지 업로드 URL 요청
-export const getProfileImageUploadUrl = async () => {
-  const response = await axios.post('/api/auth/profile/image');
+export const getProfileImageUploadUrl = async (contentType = 'image/jpeg') => {
+  const response = await axios.post('/api/auth/profile/image', { contentType });
   return response.data; // { uploadUrl, imageUrl }
 };
 
 // S3에 이미지 업로드
 export const uploadProfileImage = async (file) => {
-  // 1. Presigned URL 요청
-  const { uploadUrl, imageUrl } = await getProfileImageUploadUrl();
+  // Content-Type 결정 (파일 타입 또는 기본값)
+  const contentType = file.type || 'image/jpeg';
   
-  // 2. S3에 직접 업로드
-  await fetch(uploadUrl, {
+  // 1. Presigned URL 요청 (Content-Type 포함)
+  const { uploadUrl, imageUrl } = await getProfileImageUploadUrl(contentType);
+  
+  // 2. S3에 직접 업로드 (Content-Type 일치 필수)
+  const response = await fetch(uploadUrl, {
     method: 'PUT',
     body: file,
-    headers: { 'Content-Type': 'image/jpeg' },
+    headers: { 'Content-Type': contentType },
   });
+  
+  if (!response.ok) {
+    throw new Error(`S3 업로드 실패: ${response.status}`);
+  }
   
   // 3. 프로필에 이미지 URL 저장
   await updateProfile({ profileImage: imageUrl });

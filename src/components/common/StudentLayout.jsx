@@ -62,7 +62,7 @@ export default function StudentLayout({
       { key: 'chat', label: 'AI Conversation', path: '/chat', icon: 'forum', enabled: true },
       { key: 'stats', label: 'Statistics', path: '/stats', icon: 'leaderboard', enabled: true },
       { key: 'introduce', label: 'Introduce', path: '/introduce', icon: 'info', enabled: true },
-      { key: 'profile', label: 'Profile', path: '#', icon: 'person', enabled: false },
+      { key: 'profile', label: 'Profile', path: '/profile', icon: 'person', enabled: true },
     ],
     []
   );
