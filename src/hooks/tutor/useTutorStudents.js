@@ -44,6 +44,27 @@ export default function useTutorStudents() {
       setLastUpdate(new Date(data.timestamp));
       console.log('✅ 대시보드 업데이트 완료:', data.students?.length, '명');
     }
+    // 학생 추가 알림 수신 시 목록에 즉시 추가
+    else if (data.type === 'STUDENT_ADDED') {
+      const newStudent = {
+        email: data.data?.student_email,
+        name: data.data?.student_name || '이름 없음',
+        activity: null,
+        status: 'inactive',
+        speakingRatio: 0,
+        duration: 0,
+        currentSentence: '',
+        assignedAt: data.data?.assigned_at,
+      };
+      setStudents(prev => {
+        // 이미 있는 학생인지 확인
+        if (prev.some(s => s.email === newStudent.email)) {
+          return prev;
+        }
+        return [...prev, newStudent];
+      });
+      console.log('✅ 새 학생 추가됨:', newStudent.name);
+    }
   }, []);
 
   // 초기 로드 + 1분마다 폴링
