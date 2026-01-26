@@ -5,7 +5,7 @@ export const selectCurrentSession = (state) => state.speakingStats.currentSessio
 
 // 현재 연습 중인 Pace Ratio
 export const selectCurrentPaceRatio = (state) => {
-  const { currentPractice, practiceRecords } = state.speakingStats.currentSession;
+  const { currentPractice, lastPaceRatio } = state.speakingStats.currentSession;
 
   // 진행 중인 연습이 있으면 실시간 계산
   if (currentPractice.referenceAudioDuration > 0 &&
@@ -13,47 +13,39 @@ export const selectCurrentPaceRatio = (state) => {
     return currentPractice.userSpeakingDuration / currentPractice.referenceAudioDuration;
   }
 
-  // 완료된 연습이면 마지막 기록 반환
-  if (practiceRecords.length > 0) {
-    return practiceRecords[practiceRecords.length - 1].paceRatio;
-  }
-
-  return null;
+  // 완료된 연습이면 마지막 값 반환
+  return lastPaceRatio ?? null;
 };
 
 // 세션 내 평균 Pace Ratio
 export const selectSessionAvgPaceRatio = (state) => {
-  const { practiceRecords } = state.speakingStats.currentSession;
-  if (practiceRecords.length === 0) return null;
-  const sum = practiceRecords.reduce((acc, r) => acc + r.paceRatio, 0);
-  return sum / practiceRecords.length;
+  const { paceRatioAvg, paceRatioCount } = state.speakingStats.currentSession;
+  if (!paceRatioCount) return null;
+  return paceRatioAvg;
 };
 
-// 세션 내 모든 Pace Ratio 기록
+// (호환용) 세션 내 모든 Pace Ratio 기록 - 배열 제거됨
 export const selectPracticeRecords = (state) => {
-  return state.speakingStats.currentSession.practiceRecords;
+  return [];
 };
 
 // ===== Response Quality 관련 =====
 
 // 마지막 Response Quality
 export const selectLastResponseQuality = (state) => {
-  const { responseQualities } = state.speakingStats.currentSession;
-  if (responseQualities.length === 0) return null;
-  return responseQualities[responseQualities.length - 1];
+  return state.speakingStats.currentSession.lastResponseQuality || null;
 };
 
 // 세션 내 평균 Response Quality
 export const selectSessionAvgResponseQuality = (state) => {
-  const { responseQualities } = state.speakingStats.currentSession;
-  if (responseQualities.length === 0) return null;
-  const sum = responseQualities.reduce((acc, q) => acc + q.overallScore, 0);
-  return sum / responseQualities.length;
+  const { responseQualityAvg, responseQualityCount } = state.speakingStats.currentSession;
+  if (!responseQualityCount) return null;
+  return responseQualityAvg;
 };
 
-// 세션 내 모든 Response Quality 기록
+// (호환용) 세션 내 모든 Response Quality 기록 - 배열 제거됨
 export const selectResponseQualities = (state) => {
-  return state.speakingStats.currentSession.responseQualities;
+  return [];
 };
 
 // ===== Net Speaking Density 관련 =====
@@ -101,7 +93,7 @@ export const getPaceRatioFeedback = (ratio) => {
 
 // Net Speaking Density 평가 (% 단위)
 export const getNetSpeakingDensityFeedback = (density) => {
-  if (density === null || density === undefined || density === 0) {
+  if (density === null || density === undefined) {
     return { level: 'unknown', message: '데이터 없음', color: 'gray' };
   }
   if (density >= 60) {

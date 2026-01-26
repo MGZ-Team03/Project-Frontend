@@ -3,14 +3,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import StudentLayout from '../../components/common/StudentLayout';
-import KPICards from '../../components/student/stats/KPICards';
 import WeeklySummary from '../../components/student/stats/WeeklySummary';
 import LearningTrendChart from '../../components/student/stats/LearningTrendChart';
 import ActivityDistributionChart from '../../components/student/stats/ActivityDistributionChart';
 import RecentChats from '../../components/student/stats/RecentChats';
-import { getSessionHistory } from '../../api/sessions';
 import { getDailyStats, getWeeklyStats } from '../../api/stats';
+import { getConversationList } from '../../api/conversations';
 import { mapBackendToReduxStats } from '../../utils/statsSync';
+import {
+  getNetSpeakingDensityFeedback,
+  getPaceRatioFeedback,
+  getResponseQualityFeedback,
+} from '../../store/selectors/speakingStatsSelectors';
 
 // 시간 포맷 유틸: ms를 "X분 Y초" 형태로 변환
 function formatTime(ms) {
@@ -58,8 +62,6 @@ export default function StatsPage() {
   const user = useSelector((state) => state.auth.user);
   const reduxDailyStats = useSelector((state) => state.speakingStats.dailyStats);
 
-  const [activeTab, setActiveTab] = useState('overview');
-
   // backend stats
   const [dailyStatsApi, setDailyStatsApi] = useState(null);
   const [weeklyStatsApi, setWeeklyStatsApi] = useState(null); // array or object
@@ -106,51 +108,89 @@ export default function StatsPage() {
     fetchStats();
   }, [user?.email]);
 
-  const dailyStats = dailyStatsApi || reduxDailyStats;
+  const useApiDailyStats = useMemo(() => {
+    const s = dailyStatsApi;
+    if (!s) return false;
+    // date만 있고 값이 0이면 Redux(localStorage) 폴백 사용
+    return Boolean(
+      s.totalRecordingTime > 0 ||
+      s.totalSpeakingTime > 0 ||
+      s.sessionsCount > 0 ||
+      s.practiceCount > 0 ||
+      s.chatTurnsCount > 0 ||
+      s.paceRatioCount > 0 ||
+      s.responseQualityCount > 0 ||
+      s.responseLatencyCount > 0
+    );
+  }, [dailyStatsApi]);
 
-  const weeklyList = useMemo(() => {
+  const dailyStats = useApiDailyStats ? dailyStatsApi : reduxDailyStats;
+
+  // 주간 통계에서 daily 배열과 summary 추출
+  const { dailyList, summary } = useMemo(() => {
     const week = weeklyStatsApi;
-    // 예상: { stats: [...] } or [...] or { data: [...] }
-    const arr =
-      Array.isArray(week)
-        ? week
-        : Array.isArray(week?.stats)
-          ? week.stats
-          : Array.isArray(week?.days)
-            ? week.days
-            : Array.isArray(week?.data)
-              ? week.data
-              : null;
 
-    if (arr && arr.length > 0) {
-      // map each entry to redux dailyStats-like shape if possible
-      return arr.map((d) => {
-        if (!d || typeof d !== 'object') return mapBackendToReduxStats({});
-        // if already in camelCase dailyStat
-        if (d.totalRecordingTime != null || d.totalSpeakingTime != null) return mapBackendToReduxStats(d);
-        // if snake_case
-        const camel = {
-          date: d.date || d.day || d.dayName,
-          totalRecordingTime: d.total_recording_time,
-          totalSpeakingTime: d.total_speaking_time,
-          sessionsCount: d.sessions_count,
-          practiceCount: d.practice_count,
-          chatTurnsCount: d.chat_turns_count,
-          avgPaceRatio: d.avg_pace_ratio,
-          avgNetSpeakingDensity: d.avg_net_speaking_density,
-          avgResponseQuality: d.avg_response_quality,
-          avgResponseLatency: d.avg_response_latency,
-        };
-        return mapBackendToReduxStats(camel);
-      });
+    // 새 API 응답 구조: { daily: [...], summary: {...} }
+    const daily = week?.daily || [];
+    const summaryData = week?.summary || {};
+
+    // daily 배열을 Redux 형식으로 매핑
+    const mappedDaily = daily.map((d) => {
+      if (!d || typeof d !== 'object') return mapBackendToReduxStats({});
+
+      // snake_case → camelCase 변환
+      const camel = {
+        date: d.date,
+        totalRecordingTime: d.total_recording_time,
+        totalSpeakingTime: d.total_speaking_time,
+        sessionsCount: d.sessions_count,
+        practiceCount: d.practice_count,
+        chatTurnsCount: d.chat_turns_count,
+        avgPaceRatio: d.avg_pace_ratio,
+        avgNetSpeakingDensity: d.avg_net_speaking_density,
+        avgResponseQuality: d.avg_response_quality,
+        avgResponseLatency: d.avg_response_latency,
+      };
+      return mapBackendToReduxStats(camel);
+    });
+
+    // 오늘 날짜 (YYYY-MM-DD)
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // 백엔드 daily에 오늘 데이터가 없으면 dailyStats(로컬) 추가
+    let finalDaily = mappedDaily;
+    if (mappedDaily.length > 0) {
+      const hasTodayInApi = mappedDaily.some((d) => d.date === todayStr);
+      if (!hasTodayInApi && dailyStats?.date === todayStr) {
+        // dailyStats에 오늘 데이터가 있으면 추가
+        finalDaily = [...mappedDaily, dailyStats];
+      }
+    } else {
+      finalDaily = [dailyStats];
     }
 
-    // fallback: only today
-    return [dailyStats];
+    return {
+      dailyList: finalDaily,
+      summary: summaryData,
+    };
   }, [weeklyStatsApi, dailyStats]);
 
-  // Redux 데이터로부터 통계 계산
+  const weeklyList = dailyList;
+
+  // summary 우선 사용, 없으면 weeklyList에서 계산
   const kpiData = useMemo(() => {
+    if (summary && Object.keys(summary).length > 0) {
+      return {
+        totalTime: { value: formatTime(summary.total_recording_time || 0), change: 0, unit: '' },
+        conversations: { value: summary.total_chat_turns || 0, change: 0, unit: '' },
+        activeDays: { value: `${summary.active_days || 0} Days`, change: 0, unit: '' },
+        confidence: { value: `${(summary.avg_response_quality || 0).toFixed(1)}점`, change: 0, unit: '' },
+        speakingTime: { value: formatTime(summary.total_speaking_time || 0), change: 0, unit: '' },
+        practiceCount: { value: summary.total_practice_count || 0, change: 0, unit: '회' },
+      };
+    }
+
+    // fallback: weeklyList에서 계산
     const totalRecordingMs = weeklyList.reduce((acc, d) => acc + (d?.totalRecordingTime || 0), 0);
     const totalSpeakingMs = weeklyList.reduce((acc, d) => acc + (d?.totalSpeakingTime || 0), 0);
     const practiceCount = weeklyList.reduce((acc, d) => acc + (d?.practiceCount || 0), 0);
@@ -164,31 +204,82 @@ export default function StatsPage() {
     return {
       totalTime: { value: formatTime(totalRecordingMs), change: 0, unit: '' },
       conversations: { value: chatTurns, change: 0, unit: '' },
-      streak: { value: '0 Days', change: 0, unit: '' },
+      activeDays: { value: '0 Days', change: 0, unit: '' },
       confidence: { value: `${avgQuality ? avgQuality.toFixed(1) : '0.0'}점`, change: 0, unit: '' },
       speakingTime: { value: formatTime(totalSpeakingMs), change: 0, unit: '' },
       practiceCount: { value: practiceCount, change: 0, unit: '회' },
     };
-  }, [weeklyList]);
+  }, [weeklyList, summary]);
 
   const weeklySummary = useMemo(() => {
-    const speakingRatio = dailyStats.totalRecordingTime > 0
-      ? Math.round((dailyStats.totalSpeakingTime / dailyStats.totalRecordingTime) * 100)
-      : 0;
+    // 주간 합계 계산 (weeklyList에서)
+    const weeklyTotalRecording = weeklyList.reduce((acc, d) => acc + (d?.totalRecordingTime || 0), 0);
+    const weeklyTotalSpeaking = weeklyList.reduce((acc, d) => acc + (d?.totalSpeakingTime || 0), 0);
+    const weeklyPracticeCount = weeklyList.reduce((acc, d) => acc + (d?.practiceCount || 0), 0);
+    const weeklyChatTurns = weeklyList.reduce((acc, d) => acc + (d?.chatTurnsCount || 0), 0);
+
+    // dailyList에서 평균 계산 (summary에 값이 없을 때 사용)
+    const calcAvgFromDailyList = (field) => {
+      const validItems = dailyList.filter((d) => d[field] > 0);
+      if (validItems.length === 0) return 0;
+      return validItems.reduce((acc, d) => acc + d[field], 0) / validItems.length;
+    };
+
+    // summary 우선 사용
+    if (summary && Object.keys(summary).length > 0) {
+      // summary에 값이 없으면 dailyList에서 계산
+      const paceRatioVal = summary.avg_pace_ratio || calcAvgFromDailyList('avgPaceRatio');
+      const avgQualityVal = summary.avg_response_quality || calcAvgFromDailyList('avgResponseQuality');
+      const speakingRatioVal = summary.avg_net_speaking_density || calcAvgFromDailyList('avgNetSpeakingDensity');
+
+      return {
+        speakingRatio: Math.round(speakingRatioVal),
+        avgQuality: avgQualityVal.toFixed(1),
+        paceRatio: paceRatioVal.toFixed(2),
+        practiceCount: summary.total_practice_count || weeklyPracticeCount,
+        totalRecordingTime: summary.total_recording_time || weeklyTotalRecording,
+        totalSpeakingTime: summary.total_speaking_time || weeklyTotalSpeaking,
+        chatTurnsCount: summary.total_chat_turns || weeklyChatTurns,
+      };
+    }
+
+    // fallback: weeklyList 합계 또는 dailyStats 사용
+    const speakingRatio = weeklyTotalRecording > 0
+      ? Math.round((weeklyTotalSpeaking / weeklyTotalRecording) * 100)
+      : dailyStats.totalRecordingTime > 0
+        ? Math.round((dailyStats.totalSpeakingTime / dailyStats.totalRecordingTime) * 100)
+        : 0;
+
+    // weeklyList에서 품질 지표 평균 계산
+    const weeklyAvgQuality = calcAvgFromDailyList('avgResponseQuality');
+    const weeklyAvgPaceRatio = calcAvgFromDailyList('avgPaceRatio');
 
     return {
       speakingRatio,
-      avgQuality: dailyStats.avgResponseQuality > 0
-        ? dailyStats.avgResponseQuality.toFixed(1)
-        : '0.0',
-      tutorFeedbacks: 0, // TODO: 튜터 피드백 기능 추가 시 연동
-      paceRatio: dailyStats.avgPaceRatio > 0
-        ? dailyStats.avgPaceRatio.toFixed(2)
-        : '0.00',
-      totalMinutes: formatTime(dailyStats.totalRecordingTime),
-      totalSessions: dailyStats.sessionsCount,
+      avgQuality: (weeklyAvgQuality || dailyStats.avgResponseQuality || 0).toFixed(1),
+      paceRatio: (weeklyAvgPaceRatio || dailyStats.avgPaceRatio || 0).toFixed(2),
+      practiceCount: weeklyPracticeCount || dailyStats.practiceCount || 0,
+      totalRecordingTime: weeklyTotalRecording || dailyStats.totalRecordingTime || 0,
+      totalSpeakingTime: weeklyTotalSpeaking || dailyStats.totalSpeakingTime || 0,
+      chatTurnsCount: weeklyChatTurns || dailyStats.chatTurnsCount || 0,
     };
-  }, [dailyStats]);
+  }, [dailyStats, dailyList, weeklyList, summary]);
+
+  const paceRatioValue = Number(dailyStats?.avgPaceRatio || 0) || 0;
+  const densityValue = Number(dailyStats?.avgNetSpeakingDensity || 0) || 0;
+  const qualityValue = Number(dailyStats?.avgResponseQuality || 0) || 0;
+
+  const paceRatioPresent = Boolean(
+    (Number.isFinite(paceRatioValue) && paceRatioValue > 0) || (dailyStats?.paceRatioCount || 0) > 0
+  );
+  const densityPresent = (dailyStats?.totalRecordingTime || 0) > 0;
+  const qualityPresent = Boolean(
+    (Number.isFinite(qualityValue) && qualityValue > 0) || (dailyStats?.responseQualityCount || 0) > 0
+  );
+
+  const paceFeedback = getPaceRatioFeedback(paceRatioPresent ? paceRatioValue : null);
+  const densityFeedback = getNetSpeakingDensityFeedback(densityPresent ? densityValue : null);
+  const qualityFeedback = getResponseQualityFeedback(qualityPresent ? qualityValue : null);
 
   // 주간 추이 데이터 (백엔드 weekly 우선)
   const weeklyTrendData = useMemo(() => {
@@ -208,7 +299,7 @@ export default function StatsPage() {
       const today = new Date();
       return Array.from({ length: 7 }, (_, i) => {
         const dayIndex = (today.getDay() - 6 + i + 7) % 7;
-        return { name: dayNames[dayIndex], speaking: 0, listening: 0, practice: 0 };
+        return { name: dayNames[dayIndex], speakingSec: 0, listening: 0, practice: 0, chatTurns: 0 };
       });
     }
 
@@ -216,30 +307,65 @@ export default function StatsPage() {
       const dayIndex = d.__date.getDay();
       return {
         name: dayNames[dayIndex],
-        speaking: Math.floor((d.totalSpeakingTime || 0) / 60000),
+        // seconds 단위로 보존해서 분/초 표기 가능
+        speakingSec: Math.max(0, Math.round((d.totalSpeakingTime || 0) / 1000)),
         listening: 0,
         practice: d.practiceCount || 0,
+        chatTurns: d.chatTurnsCount || 0,
       };
     });
   }, [weeklyList]);
 
-  // 활동 분포 데이터
+  // 활동 분포 데이터 (주간 합계 기준)
   const activityDistributionData = useMemo(() => {
-    const total = dailyStats.practiceCount + dailyStats.chatTurnsCount;
-    if (total === 0) {
+    // 주간 데이터에서 합산
+    const weeklyPracticeMs = weeklyList.reduce(
+      (acc, d) => acc + Math.max(0, Number(d?.practiceSpeakingTime || 0)),
+      0
+    );
+    const weeklyChatMs = weeklyList.reduce(
+      (acc, d) => acc + Math.max(0, Number(d?.chatSpeakingTime || 0)),
+      0
+    );
+
+    // 주간 합계가 없으면 오늘 데이터 사용
+    let practiceMs = weeklyPracticeMs;
+    let chatMs = weeklyChatMs;
+
+    if (practiceMs + chatMs <= 0) {
+      practiceMs = Math.max(0, Number(dailyStats?.practiceSpeakingTime || 0));
+      chatMs = Math.max(0, Number(dailyStats?.chatSpeakingTime || 0));
+    }
+
+    // 여전히 없으면 practiceCount/chatTurnsCount로 대체 추정
+    if (practiceMs + chatMs <= 0) {
+      const totalPractice = weeklyList.reduce((acc, d) => acc + (d?.practiceCount || 0), 0) || (dailyStats?.practiceCount || 0);
+      const totalChat = weeklyList.reduce((acc, d) => acc + (d?.chatTurnsCount || 0), 0) || (dailyStats?.chatTurnsCount || 0);
+      const totalCount = totalPractice + totalChat;
+
+      if (totalCount > 0) {
+        const practicePercent = Math.round((totalPractice / totalCount) * 100);
+        const chatPercent = Math.max(0, 100 - practicePercent);
+        return [
+          { name: '문장 연습', value: practicePercent, color: '#6366f1' },
+          { name: 'AI 대화', value: chatPercent, color: '#22c55e' },
+        ];
+      }
+
       return [
         { name: '데이터 없음', value: 1, color: '#e5e7eb' },
       ];
     }
 
-    const practicePercent = Math.round((dailyStats.practiceCount / total) * 100);
-    const chatPercent = Math.round((dailyStats.chatTurnsCount / total) * 100);
+    const total = practiceMs + chatMs;
+    const practicePercent = Math.round((practiceMs / total) * 100);
+    const chatPercent = Math.max(0, 100 - practicePercent);
 
     return [
       { name: '문장 연습', value: practicePercent, color: '#6366f1' },
       { name: 'AI 대화', value: chatPercent, color: '#22c55e' },
     ];
-  }, [dailyStats]);
+  }, [weeklyList, dailyStats]);
 
   // 최근 AI 대화 조회
   useEffect(() => {
@@ -250,14 +376,19 @@ export default function StatsPage() {
         setChatsLoading(true);
         setChatsError(null);
 
-        const result = await getSessionHistory(user.email, 20); // 여유있게 20개 조회
+        const result = await getConversationList(10); // 최근 10개 조회
 
-        // AI 채팅 세션만 필터링
-        const aiChatSessions = (result?.sessions || [])
-          .filter(session => session.sessionType === 'ai_chat')
-          .slice(0, 10); // 최근 10개만
+        // 새 API 응답 형식 매핑
+        const chats = (result?.data || []).map(conv => ({
+          conversationId: conv.conversation_id,
+          topic: conv.topic,
+          difficulty: conv.difficulty,
+          turnCount: conv.turn_count,
+          startedAt: conv.timestamp,
+          preview: conv.preview,
+        }));
 
-        setRecentChats(aiChatSessions);
+        setRecentChats(chats);
       } catch (error) {
         console.error('Failed to fetch recent chats:', error);
         setChatsError(error.message || '대화 기록을 불러오지 못했습니다.');
@@ -275,18 +406,9 @@ export default function StatsPage() {
       sessionHeader={
         <header className="flex items-center justify-between bg-white dark:bg-[#1a242f] border-b border-[#dbe0e6] dark:border-gray-800 px-4 md:px-8 py-4 sticky top-0 z-10">
           <div className="flex items-center gap-4">
-            <h2 className="text-xl font-black tracking-tight">Learning Statistics & Analytics</h2>
+            <h2 className="text-xl font-black tracking-tight">학습 통계</h2>
           </div>
           <div className="flex items-center gap-3 md:gap-6">
-            <button
-              type="button"
-              className="hidden sm:flex bg-background-light dark:bg-gray-800 rounded-lg px-3 py-1.5 items-center gap-2 border border-[#dbe0e6] dark:border-gray-700"
-              title="기간(준비중)"
-            >
-              <span className="material-symbols-outlined text-sm">calendar_today</span>
-              <span className="text-xs font-semibold">Last 30 Days</span>
-              <span className="material-symbols-outlined text-sm">expand_more</span>
-            </button>
             <button
               type="button"
               className="flex items-center justify-center rounded-lg h-10 w-10 bg-background-light dark:bg-gray-800 text-[#111418] dark:text-white border border-[#dbe0e6] dark:border-gray-700 relative"
@@ -299,41 +421,17 @@ export default function StatsPage() {
         </header>
       }
     >
-      <div className="-mx-4 -mt-8 p-4 md:p-8 pb-14 space-y-8 max-w-[1600px] w-full">
-        {/* breadcrumb + tabs */}
-        <div className="space-y-4">
+      <div className="h-full min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 overflow-y-auto pt-6 pb-14 px-4 md:px-8">
+          <div className="space-y-8 max-w-[1600px] w-full mx-auto">
+            {/* breadcrumb */}
+            <div className="space-y-4">
           <div className="flex flex-wrap gap-2 text-sm">
             <span className="text-[#617589] dark:text-gray-400 font-semibold">Home</span>
             <span className="text-[#617589] dark:text-gray-400">/</span>
-            <span className="text-[#111418] dark:text-white font-semibold">Learning Statistics</span>
+            <span className="text-[#111418] dark:text-white font-semibold">학습 통계</span>
           </div>
-
-          <div className="border-b border-[#dbe0e6] dark:border-gray-800 flex gap-6 md:gap-8 overflow-x-auto">
-            {[
-              { key: 'overview', label: 'Overview' },
-              { key: 'fluency', label: 'Fluency' },
-              { key: 'vocabulary', label: 'Vocabulary' },
-              { key: 'pronunciation', label: 'Pronunciation' },
-            ].map((t) => {
-              const active = activeTab === t.key;
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => setActiveTab(t.key)}
-                  className={clsx(
-                    'pb-3 font-black text-sm tracking-wide border-b-2 transition-colors whitespace-nowrap',
-                    active
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-[#617589] dark:text-gray-400 hover:text-primary'
-                  )}
-                >
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+            </div>
 
         {statsError ? <Banner tone="warning" title="통계 로딩 실패">{statsError}</Banner> : null}
         {statsLoading ? (
@@ -345,22 +443,71 @@ export default function StatsPage() {
           </Banner>
         ) : null}
 
-        {/* KPI row (sample-like) */}
-        <KPICards kpiData={kpiData} variant="statics" />
+        {/* 오늘 요약 */}
+        <section className="bg-white dark:bg-[#1a242f] rounded-xl p-6 border border-[#dbe0e6] dark:border-gray-800 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-black text-lg text-[#111418] dark:text-white">오늘 요약</h3>
+            <span className="text-xs font-black text-primary bg-primary/10 px-2 py-1 rounded">오늘</span>
+          </div>
 
-        {/* Overview content only (others are UI only for now) */}
-        {activeTab !== 'overview' ? (
-          <Banner title="준비중">
-            <p className="text-sm opacity-90">현재는 Overview만 제공됩니다.</p>
-          </Banner>
-        ) : null}
+          {/* 기본 통계 (4열) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+            <div className="text-center p-4 bg-background-light dark:bg-gray-800 rounded-xl border border-[#dbe0e6]/60 dark:border-gray-700">
+              <p className="text-2xl font-black text-[#111418] dark:text-white">
+                {formatTime(dailyStats?.totalRecordingTime || 0)}
+              </p>
+              <p className="text-xs font-semibold text-[#617589] dark:text-gray-400 mt-1">총 학습 시간</p>
+            </div>
+            <div className="text-center p-4 bg-background-light dark:bg-gray-800 rounded-xl border border-[#dbe0e6]/60 dark:border-gray-700">
+              <p className="text-2xl font-black text-[#111418] dark:text-white">
+                {formatTime(dailyStats?.totalSpeakingTime || 0)}
+              </p>
+              <p className="text-xs font-semibold text-[#617589] dark:text-gray-400 mt-1">총 발화 시간</p>
+            </div>
+            <div className="text-center p-4 bg-background-light dark:bg-gray-800 rounded-xl border border-[#dbe0e6]/60 dark:border-gray-700">
+              <p className="text-2xl font-black text-[#111418] dark:text-white">
+                {dailyStats?.practiceCount ?? 0}회
+              </p>
+              <p className="text-xs font-semibold text-[#617589] dark:text-gray-400 mt-1">문장 연습</p>
+            </div>
+            <div className="text-center p-4 bg-background-light dark:bg-gray-800 rounded-xl border border-[#dbe0e6]/60 dark:border-gray-700">
+              <p className="text-2xl font-black text-[#111418] dark:text-white">
+                {dailyStats?.chatTurnsCount ?? 0}회
+              </p>
+              <p className="text-xs font-semibold text-[#617589] dark:text-gray-400 mt-1">AI 대화</p>
+            </div>
+          </div>
 
-        <div
-          className={clsx(
-            activeTab !== 'overview' ? 'opacity-40 pointer-events-none' : '',
-            'flex flex-col gap-6'
-          )}
-        >
+          {/* 품질 지표 (3열) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="text-center p-4 bg-background-light dark:bg-gray-800 rounded-xl border border-[#dbe0e6]/60 dark:border-gray-700">
+              <p className="text-3xl font-black text-primary">
+                {densityValue.toFixed(1)}%
+              </p>
+              <p className="text-xs font-semibold text-[#617589] dark:text-gray-400 mt-1">발화율</p>
+            </div>
+
+            <div className="text-center p-4 bg-background-light dark:bg-gray-800 rounded-xl border border-[#dbe0e6]/60 dark:border-gray-700">
+              <p className="text-3xl font-black text-yellow-600 dark:text-yellow-400">
+                {qualityValue.toFixed(1)}점
+              </p>
+              <p className="text-xs font-semibold text-[#617589] dark:text-gray-400 mt-1">응답 품질</p>
+            </div>
+
+            <div className="text-center p-4 bg-background-light dark:bg-gray-800 rounded-xl border border-[#dbe0e6]/60 dark:border-gray-700">
+              <p className="text-3xl font-black text-sky-600 dark:text-sky-400">
+                {paceRatioValue.toFixed(2)}
+              </p>
+              <p className="text-xs font-semibold text-[#617589] dark:text-gray-400 mt-1">속도 비율</p>
+            </div>
+          </div>
+        </section>
+
+        <div className="flex flex-col gap-6">
+          <div className="grid grid-cols-1 gap-6">
+            <WeeklySummary weeklySummary={weeklySummary} variant="statics" />
+          </div>
+
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2">
               <LearningTrendChart weeklyData={weeklyTrendData} variant="statics" />
@@ -368,10 +515,6 @@ export default function StatsPage() {
             <div>
               <ActivityDistributionChart data={activityDistributionData} variant="statics" />
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-6">
-            <WeeklySummary weeklySummary={weeklySummary} variant="statics" />
           </div>
 
           {/* 최근 AI 대화 */}
@@ -389,8 +532,10 @@ export default function StatsPage() {
               <RecentChats chats={recentChats} variant="statics" />
             )}
           </div>
+          </div>
         </div>
       </div>
+    </div>
     </StudentLayout>
   );
 }

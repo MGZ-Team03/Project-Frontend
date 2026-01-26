@@ -74,24 +74,17 @@ export default function RecentChats({ chats }) {
                   </div>
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm text-[#617589] dark:text-gray-400">
-                  <span>
-                    턴 수: <span className="font-black text-[#111418] dark:text-white">{chat.turnCount || 0}회</span>
-                  </span>
-                  <span>
-                    시간:{' '}
-                    <span className="font-black text-[#111418] dark:text-white">
-                      {Math.floor((chat.totalDuration || 0) / 60000)}분
-                    </span>
-                  </span>
-                  {chat.avgResponseQuality > 0 ? (
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-[#617589] dark:text-gray-400">
                     <span>
-                      품질:{' '}
-                      <span className="font-black text-[#111418] dark:text-white">
-                        {chat.avgResponseQuality.toFixed(1)}점
-                      </span>
+                      턴 수: <span className="font-black text-[#111418] dark:text-white">{chat.turnCount || 0}회</span>
                     </span>
-                  ) : null}
+                  </div>
+                  {chat.preview && (
+                    <p className="text-sm text-[#617589] dark:text-gray-400 line-clamp-2 italic">
+                      "{chat.preview}"
+                    </p>
+                  )}
                 </div>
               </div>
             );

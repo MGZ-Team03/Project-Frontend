@@ -23,3 +23,14 @@ export const getWeeklyStats = async (studentEmail) => {
   });
   return response.data;
 };
+
+/**
+ * 일별 통계 업서트(백업)
+ * - Cognito Authorizer: axios 인터셉터가 Authorization(Bearer idToken) 자동 첨부
+ * @param {Object} payload - 백엔드 스펙 payload
+ * @returns {Promise<Object>}
+ */
+export const postDailyStats = async (payload) => {
+  const response = await api.post('/api/statistics/daily', payload);
+  return response.data;
+};
