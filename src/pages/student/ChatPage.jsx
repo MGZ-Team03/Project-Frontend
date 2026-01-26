@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import StudentLayout from '../../components/common/StudentLayout';
 import FloatingCameraPreview from '../../components/common/FloatingCameraPreview';
+import RecordingButton from '../../components/common/RecordingButton';
 import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
 
 // Hooks
@@ -142,7 +143,6 @@ export default function ChatPage() {
   const conversationIdRef = useRef(null);
   const sttStatusMsgIdRef = useRef(1);
   const stopDebounceTimerRef = useRef(null);
-  const isRecordingRef = useRef(false); // 즉시 동기화용 ref
   const [isWhisperRecording, setIsWhisperRecording] = useState(false);
   const whisperStreamRef = useRef(null);
   const whisperRecorderRef = useRef(null);
@@ -485,7 +485,8 @@ export default function ChatPage() {
 
   // Mic toggle handler (Whisper only)
   const handleMicToggle = async () => {
-    if (isRecordingRef.current) {
+    // STOP (PracticePage와 동일: state 기준)
+    if (isWhisperRecording) {
       // 수동 stop(끝자락 잘림 방지)
       if (stopDebounceTimerRef.current) return;
       stopDebounceTimerRef.current = setTimeout(() => {
@@ -584,7 +585,6 @@ export default function ChatPage() {
         }
         setMicStream(null);
         whisperRecorderRef.current = null;
-        isRecordingRef.current = false; // 즉시 동기화
         setIsWhisperRecording(false);
 
         // Clear recording timer
@@ -613,8 +613,9 @@ export default function ChatPage() {
             dispatch(uploadDailyStatsOnRecordingEnd({ cameraMs, vadMs }));
 
             setIsTranscribing(true);
+            let result = null;
             try {
-              const result = await whisperTranscribe(audioBlob, {
+              result = await whisperTranscribe(audioBlob, {
                 backend: 'webgpu',
                 vad: true,
                 trimThreshold: 0.003,
@@ -700,7 +701,6 @@ export default function ChatPage() {
       };
 
       recorder.start();
-      isRecordingRef.current = true; // 즉시 동기화
       setIsWhisperRecording(true);
       return; // now recording; stop on next click
     } catch (e) {
@@ -852,10 +852,11 @@ export default function ChatPage() {
     !isAILoading &&
     !isTranscribing &&
     !!conversationIdRef.current &&
-    whisperStatus === 'ready';
+    whisperStatus === 'ready' &&
+    !isSpeaking;
 
   // 녹음 중일 때는 무조건 클릭 가능 (중지를 위해)
-  const canClickMic = isRecordingNow || canRecord;
+  const micDisabled = !isRecordingNow && !canRecord;
 
   const sessionHeader = useMemo(() => {
     return (
@@ -904,9 +905,6 @@ export default function ChatPage() {
     } catch (_) {}
     try {
       whisperRecorderRef.current?.stop?.();
-    } catch (_) {}
-    try {
-      replayAudioRef.current?.pause?.();
     } catch (_) {}
     navigate('/home');
   }, [navigate, stopTTS]);
@@ -1343,27 +1341,14 @@ export default function ChatPage() {
                   {/* Center group: MIC + 다시듣기 */}
                   <div className="flex gap-4 items-center">
                     {/* MIC button */}
-                    <div className="relative flex items-center justify-center">
-                      {isRecordingNow ? <ProgressRing valuePercent={micProgressPct} /> : null}
-                      <button
-                        type="button"
-                        onClick={handleMicToggle}
-                        disabled={!canClickMic}
-                        className={clsx(
-                          'flex items-center justify-center rounded-full size-20 text-white shadow-2xl transition-transform disabled:opacity-60 disabled:cursor-not-allowed',
-                          isRecordingNow
-                            ? 'bg-red-500 shadow-red-500/20 hover:scale-105'
-                            : 'bg-primary shadow-primary/30 hover:scale-105'
-                        )}
-                        title={
-                          isRecordingNow
-                            ? `녹음 중지 (${Math.floor((MAX_RECORDING_DURATION - recordingDuration) / 1000)}초 남음)`
-                            : '녹음 시작'
-                        }
-                      >
-                        <span className="material-symbols-outlined text-4xl">{isRecordingNow ? 'mic_off' : 'mic'}</span>
-                      </button>
-                    </div>
+                    <RecordingButton
+                      isRecording={isRecordingNow}
+                      progressPercent={micProgressPct}
+                      onClick={handleMicToggle}
+                      disabled={micDisabled}
+                      titleIdle="Record"
+                      titleRecording="Stop"
+                    />
 
                     {/* VAD replay button - 항상 표시 */}
                     <IconPillButton

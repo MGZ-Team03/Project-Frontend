@@ -1,7 +1,8 @@
 // 학습 통계 페이지 (student-statics 샘플 기반)
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { setWeeklyStatsCache } from '../../store/slices/speakingStatsSlice';
 import StudentLayout from '../../components/common/StudentLayout';
 import WeeklySummary from '../../components/student/stats/WeeklySummary';
 import LearningTrendChart from '../../components/student/stats/LearningTrendChart';
@@ -59,8 +60,10 @@ function extractApiData(res) {
 }
 
 export default function StatsPage() {
+  const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
   const reduxDailyStats = useSelector((state) => state.speakingStats.dailyStats);
+  const weeklyStatsCache = useSelector((state) => state.speakingStats.weeklyStatsCache);
 
   // backend stats
   const [dailyStatsApi, setDailyStatsApi] = useState(null);
@@ -73,7 +76,13 @@ export default function StatsPage() {
   const [chatsLoading, setChatsLoading] = useState(false);
   const [chatsError, setChatsError] = useState(null);
 
-  // Fetch backend stats
+  // 오늘 날짜 (캐시 유효성 검사용)
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  // 캐시가 오늘 fetch된 것인지 확인
+  const shouldFetchWeekly = !weeklyStatsCache?.data || weeklyStatsCache?.fetchedDate !== todayStr;
+
+  // Fetch backend stats (캐시 활용)
   useEffect(() => {
     const fetchStats = async () => {
       if (!user?.email) return;
@@ -81,20 +90,24 @@ export default function StatsPage() {
         setStatsLoading(true);
         setStatsError(null);
 
-        const [dailyRes, weeklyRes] = await Promise.all([
-          getDailyStats(user.email),
-          getWeeklyStats(user.email),
-        ]);
-
+        // dailyStats는 항상 fetch (최신 오늘 데이터)
+        const dailyRes = await getDailyStats(user.email);
         const dailyData = extractApiData(dailyRes);
-        const weeklyData = extractApiData(weeklyRes);
-
-        // daily: try mapping if already in backend shape (camelCase expected)
         const mappedDaily =
           dailyData && typeof dailyData === 'object' ? mapBackendToReduxStats(dailyData) : null;
-
         setDailyStatsApi(mappedDaily);
-        setWeeklyStatsApi(weeklyData);
+
+        // weeklyStats는 캐시 있으면 사용, 없으면 fetch
+        if (shouldFetchWeekly) {
+          const weeklyRes = await getWeeklyStats(user.email);
+          const weeklyData = extractApiData(weeklyRes);
+          setWeeklyStatsApi(weeklyData);
+          // Redux 캐시에 저장
+          dispatch(setWeeklyStatsCache(weeklyData));
+        } else {
+          // 캐시 데이터 사용
+          setWeeklyStatsApi(weeklyStatsCache.data);
+        }
       } catch (e) {
         console.error('[StatsPage] Failed to fetch stats:', e);
         setStatsError(e?.message || '통계 데이터를 불러오지 못했습니다.');
@@ -106,7 +119,7 @@ export default function StatsPage() {
     };
 
     fetchStats();
-  }, [user?.email]);
+  }, [user?.email, shouldFetchWeekly, dispatch, weeklyStatsCache?.data, todayStr]);
 
   const useApiDailyStats = useMemo(() => {
     const s = dailyStatsApi;
@@ -157,16 +170,28 @@ export default function StatsPage() {
     // 오늘 날짜 (YYYY-MM-DD)
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // 백엔드 daily에 오늘 데이터가 없으면 dailyStats(로컬) 추가
+    // dailyStats(로컬)에 유효한 데이터가 있는지 확인
+    const hasTodayData = (dailyStats?.totalRecordingTime || 0) > 0 ||
+                         (dailyStats?.totalSpeakingTime || 0) > 0 ||
+                         (dailyStats?.practiceCount || 0) > 0 ||
+                         (dailyStats?.chatTurnsCount || 0) > 0;
+
+    // 백엔드 daily에서 오늘 데이터 제외 + 로컬 오늘 데이터 추가
     let finalDaily = mappedDaily;
     if (mappedDaily.length > 0) {
-      const hasTodayInApi = mappedDaily.some((d) => d.date === todayStr);
-      if (!hasTodayInApi && dailyStats?.date === todayStr) {
-        // dailyStats에 오늘 데이터가 있으면 추가
-        finalDaily = [...mappedDaily, dailyStats];
+      // 오늘 날짜 데이터는 백엔드 것 제외 (로컬이 더 최신)
+      const withoutToday = mappedDaily.filter((d) => d.date !== todayStr);
+
+      if (hasTodayData) {
+        // 로컬 오늘 데이터 추가
+        finalDaily = [...withoutToday, { ...dailyStats, date: todayStr }];
+      } else {
+        finalDaily = withoutToday;
       }
+    } else if (hasTodayData) {
+      finalDaily = [{ ...dailyStats, date: todayStr }];
     } else {
-      finalDaily = [dailyStats];
+      finalDaily = [];
     }
 
     return {
@@ -225,21 +250,33 @@ export default function StatsPage() {
       return validItems.reduce((acc, d) => acc + d[field], 0) / validItems.length;
     };
 
-    // summary 우선 사용
+    // summary 우선 사용 (백엔드 어제까지 + 오늘 로컬 합산)
     if (summary && Object.keys(summary).length > 0) {
       // summary에 값이 없으면 dailyList에서 계산
       const paceRatioVal = summary.avg_pace_ratio || calcAvgFromDailyList('avgPaceRatio');
       const avgQualityVal = summary.avg_response_quality || calcAvgFromDailyList('avgResponseQuality');
       const speakingRatioVal = summary.avg_net_speaking_density || calcAvgFromDailyList('avgNetSpeakingDensity');
 
+      // 오늘 로컬 데이터
+      const todayRecording = dailyStats?.totalRecordingTime || 0;
+      const todaySpeaking = dailyStats?.totalSpeakingTime || 0;
+      const todayPractice = dailyStats?.practiceCount || 0;
+      const todayChatTurns = dailyStats?.chatTurnsCount || 0;
+
+      // 백엔드(어제까지) + 오늘 로컬 합산
+      const totalRecording = (summary.total_recording_time || 0) + todayRecording;
+      const totalSpeaking = (summary.total_speaking_time || 0) + todaySpeaking;
+      const totalPractice = (summary.total_practice_count || 0) + todayPractice;
+      const totalChatTurns = (summary.total_chat_turns || 0) + todayChatTurns;
+
       return {
         speakingRatio: Math.round(speakingRatioVal),
         avgQuality: avgQualityVal.toFixed(1),
         paceRatio: paceRatioVal.toFixed(2),
-        practiceCount: summary.total_practice_count || weeklyPracticeCount,
-        totalRecordingTime: summary.total_recording_time || weeklyTotalRecording,
-        totalSpeakingTime: summary.total_speaking_time || weeklyTotalSpeaking,
-        chatTurnsCount: summary.total_chat_turns || weeklyChatTurns,
+        practiceCount: totalPractice,
+        totalRecordingTime: totalRecording,
+        totalSpeakingTime: totalSpeaking,
+        chatTurnsCount: totalChatTurns,
       };
     }
 
