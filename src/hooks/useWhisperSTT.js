@@ -19,6 +19,7 @@ let sharedWorkerBackend = null;
 let sharedWorkerInitPromise = null;
 let sharedWorkerLastError = null;
 let msgIdSeq = 1;
+const TRANSCRIBE_TIMEOUT_MS = 600_000; // 10분: worker hang 방지
 
 // Safari에서 반복 decodeAudioData 시 메모리 회수 이슈 완화:
 // - old_ui 방식 복원: 매번 독립 AudioContext 생성 + 즉시 close()
@@ -354,7 +355,36 @@ export function useWhisperSTT() {
       const vadDurationMs = Math.round((audio.length / 16000) * 1000);
 
       const text = await new Promise((resolve, reject) => {
-        pendingRef.current.set(id, { resolve, reject });
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          try {
+            pendingRef.current.delete(id);
+          } catch (_) {}
+          // worker가 멈춘 케이스를 복구(다음 녹음이 막히지 않게)
+          resetWorker('transcribe_timeout');
+          const err = `STT timeout (${Math.round(TRANSCRIBE_TIMEOUT_MS / 1000)}s)`;
+          setStatus('error');
+          setError(err);
+          reject(new Error(err));
+        }, TRANSCRIBE_TIMEOUT_MS);
+
+        const wrappedResolve = (v) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve(v);
+        };
+        const wrappedReject = (e) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          reject(e);
+        };
+
+        pendingRef.current.set(id, { resolve: wrappedResolve, reject: wrappedReject });
+
         // Transfer audio buffer for performance
         const effectivePrompt =
           typeof promptOverride === 'string'
@@ -377,32 +407,12 @@ export function useWhisperSTT() {
       };
     };
 
-    function isSuspiciousText(text, vadDurationMs) {
-      const t = String(text || '').trim();
-      if (!t) return true;
-      const lower = t.toLowerCase();
-      if (lower === 'you') return true;
-      // 오디오가 충분히 긴데 결과가 비정상적으로 짧으면 의심
-      if (t.length <= 3 && (vadDurationMs || 0) >= 2000) return true;
-      return false;
-    }
-
     const desiredBackend = backend === 'webgpu' ? 'webgpu' : 'wasm';
     const primaryModelId = modelIdRef.current;
 
-    // 1) desired backend + small
+    // 1) desired backend + small (재추론/재시도 없이 1회만 실행)
     try {
-      const r1 = await runOnce(primaryModelId, desiredBackend, prompt);
-      if (!isSuspiciousText(r1?.text, r1?.vadDurationMs)) return r1;
-
-      // 1-1) suspicious -> retry once WITHOUT prompt (same backend)
-      const r2 = await runOnce(primaryModelId, desiredBackend, null);
-      if (!isSuspiciousText(r2?.text, r2?.vadDurationMs)) return r2;
-
-      // 1-2) still suspicious -> reset worker and retry once WITHOUT prompt
-      resetWorker('suspicious_text');
-      const r3 = await runOnce(primaryModelId, desiredBackend, null);
-      return r3;
+      return await runOnce(primaryModelId, desiredBackend, prompt);
     } catch (e1) {
       const msg1 = e1?.message || String(e1);
 

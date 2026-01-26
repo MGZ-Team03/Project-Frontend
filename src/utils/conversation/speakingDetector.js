@@ -102,18 +102,33 @@ export function createSpeakingDetector() {
   function getSpeakingState(landmarks, audioVolume, options = {}) {
     const { gated = false } = options;
 
-    // landmarks가 없으면 발음 중이 아님(오디오만으로는 false 반환)
+    // landmarks가 없으면 "카메라 기반" 판정은 불가하지만,
+    // "오디오 기반" 감지(hasAudio/VAD)는 계속 동작해야 한다.
     if (!landmarks || landmarks.length === 0) {
+      // noiseFloor가 아직 안정화되지 않았을 때(=0) 말소리로 오염되지 않게,
+      // 충분히 조용한 구간에서만 초기화/업데이트한다.
+      const baseThreshold = CONFIG.AUDIO_THRESHOLD;
+      const dynamicThreshold =
+        noiseFloor > 0
+          ? Math.max(noiseFloor + CONFIG.VOICE_OFFSET, baseThreshold)
+          : baseThreshold;
+      const hasAudio = !gated && audioVolume > dynamicThreshold;
+
+      // 배경 소음 구간에서만 노이즈 플로어 업데이트 (랜드마크 없음 → mouthActive 판단 불가)
+      if (!gated && audioVolume <= baseThreshold) {
+        updateNoiseFloor(audioVolume, false, gated);
+      }
+
       return {
         isSpeaking: false,
         mouthOpen: false,
         mouthMoving: false,
         mouthActive: false,
-        hasAudio: false,
+        hasAudio,
         mar: 0,
         marStd: 0,
         volume: audioVolume,
-        threshold: 0,
+        threshold: dynamicThreshold,
       };
     }
 

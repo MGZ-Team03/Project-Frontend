@@ -78,6 +78,11 @@ const initialState = {
   userEmail: null,  // User context for localStorage key
   isLoading: false,
   error: null,
+  // 주간 통계 캐시 (어제까지 데이터 - 하루 동안 변동 없음)
+  weeklyStatsCache: {
+    data: null,        // { daily: [...], summary: {...} }
+    fetchedDate: null, // 마지막 fetch 날짜 (YYYY-MM-DD)
+  },
 };
 
 // localStorage에서 일일 통계 로드 (백엔드 fallback)
@@ -184,19 +189,42 @@ export const uploadDailyStatsOnRecordingEnd = createAsyncThunk(
 
       const dailyStats = state?.speakingStats?.dailyStats || {};
       const session = state?.speakingStats?.currentSession || {};
+      const sessionType = session?.sessionType || null; // 'chat' | 'practice' | null
 
       const safeCameraMs = Math.max(0, Number(cameraMs) || 0);
       const safeVadMs = Math.max(0, Number(vadMs) || 0);
       const diffMs = Math.abs(safeCameraMs - safeVadMs);
       if (diffMs > 3000) return { skipped: true, reason: 'diff_too_large', diffMs };
 
+      // ===== 유효성 검사: 실제 발화/메시지 전송 여부 =====
+      const effectiveSpeakingTime =
+        (dailyStats.totalSpeakingTime || 0) + (session.userSpeakingTime || 0);
+
+      // 조건 1: 실제 발화가 없으면 skip (VAD 기반)
+      if (effectiveSpeakingTime === 0) {
+        return { skipped: true, reason: 'no_speaking' };
+      }
+
+      // 조건 2: AI 대화 세션에서만, "사용자 발화/메시지 전송"이 없으면 백업하지 않음
+      // - AI만 말한 경우(유저 발화 없음) 포함
+      // - 문장 연습(practice) 세션은 chatTurnsCount와 무관
+      if (sessionType === 'chat') {
+        // 이번 녹음에서 VAD 기준 발화가 없으면 skip
+        if (safeVadMs <= 0) {
+          return { skipped: true, reason: 'no_user_speech_vad' };
+        }
+        // 사용자 메시지 전송(턴) 자체가 없으면 skip
+        if ((dailyStats.chatTurnsCount || 0) === 0) {
+          return { skipped: true, reason: 'no_chat_turns' };
+        }
+      }
+
       const date = dailyStats.date || getTodayKey();
 
       // ===== 스냅샷(세션 누적분 포함) =====
       const effectiveTotalRecordingTime =
         (dailyStats.totalRecordingTime || 0) + (session.totalRecordingTime || 0);
-      const effectiveTotalSpeakingTime =
-        (dailyStats.totalSpeakingTime || 0) + (session.userSpeakingTime || 0);
+      const effectiveTotalSpeakingTime = effectiveSpeakingTime;
 
       const netDensity =
         effectiveTotalRecordingTime > 0
@@ -469,6 +497,22 @@ const speakingStatsSlice = createSlice({
         localStorage.setItem(storageKey, JSON.stringify(state.dailyStats));
       }
     },
+
+    // 주간 통계 캐시 설정
+    setWeeklyStatsCache: (state, action) => {
+      state.weeklyStatsCache = {
+        data: action.payload,
+        fetchedDate: getTodayKey(),
+      };
+    },
+
+    // 주간 통계 캐시 초기화
+    clearWeeklyStatsCache: (state) => {
+      state.weeklyStatsCache = {
+        data: null,
+        fetchedDate: null,
+      };
+    },
   },
 
   extraReducers: (builder) => {
@@ -505,6 +549,8 @@ export const {
   completePractice,
   resetDailyStats,
   saveDailyStats,
+  setWeeklyStatsCache,
+  clearWeeklyStatsCache,
 } = speakingStatsSlice.actions;
 
 export default speakingStatsSlice.reducer;
