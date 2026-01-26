@@ -33,7 +33,8 @@ export default function StudentLayout({
 
   // 마운트 시 1회 preload (이미 ready면 스킵)
   useEffect(() => {
-    preloadGlobal();
+    // WebGPU 우선. WebGPU 실패 시 폴백은 useWhisperSTT 내부에서 처리.
+    preloadGlobal('webgpu');
   }, [preloadGlobal]);
 
   // 다크모드 초기화/동기화
@@ -304,8 +305,12 @@ export default function StudentLayout({
         </aside>
 
         {/* Main */}
-        <main className="flex-1 flex flex-col overflow-y-auto bg-background-light dark:bg-[#0d141c]">
-          <div className={mode === 'session' ? 'w-full' : 'max-w-[1400px] w-full mx-auto'}>
+        <main
+          className={`flex-1 flex flex-col bg-background-light dark:bg-[#0d141c] ${
+            mode === 'session' ? 'overflow-hidden' : 'overflow-y-auto'
+          }`}
+        >
+          <div className={mode === 'session' ? 'w-full flex flex-col flex-1 min-h-0' : 'max-w-[1400px] w-full mx-auto'}>
             {mode === 'session' ? (
               <div className="sticky top-0 z-40 w-full">{sessionHeader}</div>
             ) : (
@@ -391,7 +396,7 @@ export default function StudentLayout({
             )}
 
             {/* Content */}
-            <div className={mode === 'session' ? 'py-8 px-4' : 'px-6 md:px-8 pb-8'}>{children}</div>
+            <div className={mode === 'session' ? 'flex-1 min-h-0' : 'px-6 md:px-8 pb-8'}>{children}</div>
           </div>
         </main>
       </div>

@@ -44,8 +44,9 @@ import { evaluatePronunciation } from '../../api/stt';
 import { validateSentence } from '../../utils/conversation/sentenceValidator';
 import { getScenarioById } from '../../data/conversation/scenarios';
 import { useSentenceAudioSession } from '../../hooks/useSentenceAudioSession';
-import { extractVADSegments } from '../../utils/audioTrimmer';
-import { createPcmRecorder } from '../../utils/pcmRecorder';
+import { playVadReplay, stopVadReplay } from '../../utils/vadReplayPlayer';
+import { cancelPrevious, enqueue } from '../../utils/postRecordingPipeline';
+import RecordingButton from '../../components/common/RecordingButton';
 
 // Redux
 import {
@@ -58,6 +59,7 @@ import {
   updateRecordingTime,
   updateSpeakingTime,
   updatePracticeSpeakingTime,
+  uploadDailyStatsOnRecordingEnd,
 } from '../../store/slices/speakingStatsSlice';
 import {
   selectCurrentPaceRatio,
@@ -78,41 +80,6 @@ const AUDIO_POLL_SCHEDULE_MS = [0, 500, 1000, 2000, 3000, 5000];
 
 // 캐시 크기 제한 (메모리 누수 방지)
 const MAX_SENTENCE_CACHE_SIZE = 20;
-
-function ProgressRing({ valuePercent }) {
-  const size = 96;
-  const stroke = 6;
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const pct = Math.max(0, Math.min(100, valuePercent || 0));
-  const dash = (pct / 100) * c;
-
-  return (
-    <svg width={size} height={size} className="absolute inset-0">
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="transparent"
-        stroke="currentColor"
-        strokeWidth={stroke}
-        className="text-white/15"
-      />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="transparent"
-        stroke="currentColor"
-        strokeWidth={stroke}
-        strokeLinecap="round"
-        strokeDasharray={`${dash} ${c - dash}`}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        className="text-white"
-      />
-    </svg>
-  );
-}
 
 export default function PracticePage() {
   const user = useSelector(state => state.auth.user);
@@ -180,15 +147,12 @@ export default function PracticePage() {
   const whisperRecorderRef = useRef(null);
   const whisperChunksRef = useRef([]);
   const [micStream, setMicStream] = useState(null);
-  const pcmRecorderRef = useRef(null);
-  // 문장별 VAD 오디오(말한 구간) - 마지막 1개만 유지(덮어쓰기)
-  const [vadAudioUrlBySentenceId, setVadAudioUrlBySentenceId] = useState({});
-  const vadAudioUrlBySentenceIdRef = useRef({});
+  // 문장별 VAD 다시듣기(PCM) - Blob 없이 WebAudio로만 재생
+  const vadReplayPcmBySentenceIdRef = useRef({}); // { [sentenceId]: Float32Array }
   const [vadDurationMsBySentenceId, setVadDurationMsBySentenceId] = useState({});
   const [isVadTrimming, setIsVadTrimming] = useState(false);
   const [vadTrimError, setVadTrimError] = useState(null);
   const [replayError, setReplayError] = useState(null);
-  const replayAudioRef = useRef(null);
   const recordingSentenceIdRef = useRef(null);
 
   // 세션 시간(통계용): 버튼 시작~끝 기준
@@ -225,75 +189,46 @@ export default function PracticePage() {
     onTick: handleSpeechTick,
   });
 
-  const setVadAudioUrlForSentenceId = useCallback((sentenceId, nextUrlOrNull) => {
+  const setVadReplayPcmForSentenceId = useCallback((sentenceId, pcmOrNull) => {
     if (!sentenceId) return;
-    setVadAudioUrlBySentenceId((prev) => {
-      const oldUrl = prev?.[sentenceId];
-      if (oldUrl) {
-        try {
-          URL.revokeObjectURL(oldUrl);
-        } catch (_) {}
-      }
-      const next = { ...(prev || {}) };
-      if (nextUrlOrNull) next[sentenceId] = nextUrlOrNull;
-      else delete next[sentenceId];
-      vadAudioUrlBySentenceIdRef.current = next;
-      return next;
-    });
+    const next = { ...(vadReplayPcmBySentenceIdRef.current || {}) };
+    if (pcmOrNull) next[sentenceId] = pcmOrNull;
+    else delete next[sentenceId];
+    vadReplayPcmBySentenceIdRef.current = next;
   }, []);
 
   const clearReplayUrls = useCallback((sentenceId) => {
-    setVadAudioUrlForSentenceId(sentenceId, null);
+    setVadReplayPcmForSentenceId(sentenceId, null);
     // vadDurationMs는 초기화하지 않음 (STT 완료 시 새 값으로 업데이트됨)
-  }, [setVadAudioUrlForSentenceId]);
+  }, [setVadReplayPcmForSentenceId]);
 
-  const playLocalUrl = useCallback((url) => {
-    if (!url) return;
+  const playVadForSentenceId = useCallback(async (sentenceId) => {
+    if (!sentenceId) return;
+    const pcm = vadReplayPcmBySentenceIdRef.current?.[sentenceId] || null;
+    if (!pcm) return;
     setReplayError(null);
     try {
-      replayAudioRef.current?.pause?.();
-    } catch (_) {}
-    const audio = new Audio(url);
-    replayAudioRef.current = audio;
-    audio.play().catch((e) => {
-      setReplayError(e?.message || '오디오 재생에 실패했습니다. (브라우저 포맷/코덱 미지원 가능)');
-    });
+      await playVadReplay({ pcm, sampleRate: 16000 });
+    } catch (e) {
+      setReplayError(e?.message || '오디오 재생에 실패했습니다.');
+    }
   }, []);
 
 
-  // topic/난이도 변경 등으로 문장 세션이 바뀌면 이전 VAD URL들을 정리
+  // topic/난이도 변경 등으로 문장 세션이 바뀌면 이전 VAD PCM들을 정리
   useEffect(() => {
-    try {
-      const map = vadAudioUrlBySentenceIdRef.current || {};
-      Object.values(map).forEach((url) => {
-        if (!url) return;
-        try {
-          URL.revokeObjectURL(url);
-        } catch (_) {}
-      });
-    } catch (_) {}
-    vadAudioUrlBySentenceIdRef.current = {};
-    setVadAudioUrlBySentenceId({});
+    vadReplayPcmBySentenceIdRef.current = {};
     setVadDurationMsBySentenceId({});
   }, [topicId, difficulty]);
 
-  // unmount 시에도 남은 URL 정리
+  // unmount 시에도 남은 리소스 정리
   useEffect(() => {
     return () => {
       try {
-        replayAudioRef.current?.pause?.();
-      } catch (_) {}
-      try {
-        const map = vadAudioUrlBySentenceIdRef.current || {};
-        Object.values(map).forEach((url) => {
-          if (!url) return;
-          try {
-            URL.revokeObjectURL(url);
-          } catch (_) {}
-        });
+        stopVadReplay();
       } catch (_) {}
     };
-  }, []);
+  }, [stopVadReplay]);
 
   // State - 발음 평가 및 STT
   const [evaluationResult, setEvaluationResult] = useState(null);
@@ -342,19 +277,23 @@ export default function PracticePage() {
       }
 
       // Whisper recorder/stream cleanup
-      if (whisperRecorderRef.current && whisperRecorderRef.current.state === 'recording') {
-        try {
-          whisperRecorderRef.current.stop();
-        } catch (_) {
-          // ignore
+      if (whisperRecorderRef.current) {
+        if (whisperRecorderRef.current.state === 'recording') {
+          try {
+            whisperRecorderRef.current.stop();
+          } catch (_) {
+            // ignore
+          }
         }
+        // 이벤트 핸들러 정리 (메모리 누수 방지)
+        try {
+          whisperRecorderRef.current.ondataavailable = null;
+          whisperRecorderRef.current.onstop = null;
+        } catch (_) {}
+        whisperRecorderRef.current = null;
       }
-      try {
-        pcmRecorderRef.current?.stop?.();
-      } catch (_) {}
-      pcmRecorderRef.current = null;
-      whisperRecorderRef.current = null;
       whisperChunksRef.current = [];
+
       if (whisperStreamRef.current) {
         whisperStreamRef.current.getTracks().forEach((t) => {
           try {
@@ -369,6 +308,16 @@ export default function PracticePage() {
           }
         });
         whisperStreamRef.current = null;
+      }
+
+      // cameraStreamRef 정리 추가 (메모리 누수 방지)
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (_) {}
+        });
+        cameraStreamRef.current = null;
       }
     };
   }, []);
@@ -698,6 +647,9 @@ export default function PracticePage() {
       return;
     }
 
+    // 새 녹음 시작 시: 이전 후처리 파이프라인 결과 무시(latest-only)
+    cancelPrevious('practice');
+
     setValidationResult(null);
     setTranscript('');
     setSttWarning(null);
@@ -749,21 +701,16 @@ export default function PracticePage() {
       });
       whisperStreamRef.current = stream;
       setMicStream(stream);
-      // PCM recorder (WAV) for replay/trim (Safari 호환)
-      try {
-        pcmRecorderRef.current = createPcmRecorder(stream, { channelCount: 1 });
-      } catch (_) {
-        pcmRecorderRef.current = null;
-      }
-
       const preferred = [
+        // mp4 우선(테스트용)
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/mp4',
         'audio/webm;codecs=opus',
         'audio/webm',
         'audio/ogg;codecs=opus',
-        'audio/mp4;codecs=mp4a.40.2',
-        'audio/mp4',
       ];
       const mimeType = preferred.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
+
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       whisperRecorderRef.current = recorder;
 
@@ -773,10 +720,10 @@ export default function PracticePage() {
 
       recorder.onstop = async () => {
         const blobType = mimeType || whisperChunksRef.current?.[0]?.type || 'audio/webm';
-        const audioBlob = new Blob(whisperChunksRef.current, { type: blobType });
+        let audioBlob = new Blob(whisperChunksRef.current, { type: blobType });
         whisperChunksRef.current = [];
 
-        // VAD 세그먼트 확정 + 원본/트리밍 오디오 URL 생성(재생용)
+        // VAD 세그먼트 확정 (재생/검증/통계용)
         const sentenceId = recordingSentenceIdRef.current || currentSentence?.id || null;
         const vadSegments = typeof finalizeVadSegments === 'function' ? finalizeVadSegments() : [];
         const vadSegmentsDurationMs = (vadSegments || []).reduce((sum, seg) => {
@@ -785,29 +732,6 @@ export default function PracticePage() {
           const d = Math.max(0, e - s);
           return sum + d;
         }, 0);
-        let replayBaseBlob = audioBlob;
-        try {
-          const wav = await pcmRecorderRef.current?.stop?.();
-          if (wav) replayBaseBlob = wav;
-        } catch (_) {}
-        pcmRecorderRef.current = null;
-        setIsVadTrimming(true);
-        setVadTrimError(null);
-        try {
-          const vadBlob = await extractVADSegments(replayBaseBlob, vadSegments);
-          // vadDurationMs는 STT 완료 시 설정됨 (여기서는 건드리지 않음)
-          if (sentenceId) {
-            const url = URL.createObjectURL(vadBlob);
-            setVadAudioUrlForSentenceId(sentenceId, url);
-            // STT를 스킵하는 경우에도 UI/디버그용으로 우선 VAD(전처리) 시간은 기록
-            setVadDurationMsBySentenceId((prev) => ({ ...(prev || {}), [sentenceId]: vadSegmentsDurationMs }));
-          }
-        } catch (e) {
-          setVadTrimError(e?.message || 'VAD 오디오 생성에 실패했습니다.');
-          if (sentenceId) setVadAudioUrlForSentenceId(sentenceId, null);
-        } finally {
-          setIsVadTrimming(false);
-        }
 
         // cleanup stream
         if (whisperStreamRef.current) {
@@ -850,6 +774,8 @@ export default function PracticePage() {
         });
 
         if (diffMs > THRESHOLD_MS) {
+          // 메모리 해제: 검증 실패 시 blob 조기 해제
+          audioBlob = null;
           setTranscript('');
           setEvaluationResult(null);
           setSttNeedsRetry(true);
@@ -864,73 +790,161 @@ export default function PracticePage() {
           return;
         }
 
-        setIsTranscribing(true);
-        try {
-          const result = await whisperTranscribe(audioBlob, {
-            prompt: currentSentence?.text,
-            backend: 'webgpu',
-            vad: true,
-            trimThreshold: 0.003,
-            trimPaddingSec: 0.1,
-          });
-          const transcribedText = String(result?.text || '').trim();
-          const sttVadDurationMs = result?.vadDurationMs || null;
-
-          // STT 전처리 VAD 시간 저장
-          console.log('[PracticePage] STT result:', {
-            text: transcribedText.substring(0, 30),
-            vadDurationMs: sttVadDurationMs,
-            vadDurationSec: sttVadDurationMs ? (sttVadDurationMs / 1000).toFixed(2) : null
-          });
-          if (sttVadDurationMs !== null) {
-            if (sentenceId) {
-              setVadDurationMsBySentenceId((prev) => ({ ...(prev || {}), [sentenceId]: sttVadDurationMs }));
+        // 녹음 후 처리(STT/VAD 트리밍/업로드)는 싱글턴 파이프라인에서 1개씩 처리
+        enqueue(
+          'practice',
+          async ({ isCurrent }) => {
+            if (!isCurrent()) {
+              // 메모리 해제: 취소 시 blob 조기 해제
+              audioBlob = null;
+              return;
             }
-          }
 
-          if (!transcribedText) {
-            setTranscript('');
-            setSttWarning('STT 결과가 비었습니다. 다시 한 번 말해보세요.');
-            setSttNeedsRetry(false);
-            setSttMismatchInfo(null);
-            setEvaluationResult(null);
-            return;
-          }
-          setTranscript(transcribedText);
+            // 통계 백업: 유효 녹음(카메라 vs VAD diff 통과)일 때만, 데이터 변화가 있으면 POST
+            dispatch(uploadDailyStatsOnRecordingEnd({ cameraMs, vadMs }));
 
-          if (currentSentence) {
-            setIsEvaluating(true);
+            setIsTranscribing(true);
+            let sttResult = null;
             try {
-              const result = await evaluatePronunciation({
-                originalText: currentSentence.text,
-                transcribedText: transcribedText,
-                sentenceId: currentSentence.id,
-                audioDurationMs: durationMs,
+              sttResult = await whisperTranscribe(audioBlob, {
+                prompt: currentSentence?.text,
+                backend: 'webgpu',
+                vad: true,
+                trimThreshold: 0.003,
+                trimPaddingSec: 0.1,
               });
-              setEvaluationResult(result.evaluation);
-            } catch (error) {
-              console.error('Pronunciation evaluation error:', error);
-              setEvaluationResult(null);
-            } finally {
-              setIsEvaluating(false);
-            }
-          }
 
-          dispatch(completePractice({ userSpeakingTime: speakingMs }));
-        } catch (e) {
-          console.error('Whisper STT error:', e);
-          setTranscript('');
-          setSttWarning(e?.message || 'Whisper STT 오류가 발생했습니다.');
-          setSttNeedsRetry(false);
-          setSttMismatchInfo(null);
-        } finally {
-          setIsTranscribing(false);
-          if (recordingTimerRef.current) {
-            clearInterval(recordingTimerRef.current);
-            recordingTimerRef.current = null;
-          }
-          setRecordingDuration(0);
-        }
+              audioBlob = null;
+
+              if (!isCurrent()) {
+                // 취소 시 VAD용 blob도 해제
+                return;
+              }
+
+              const transcribedText = String(sttResult?.text || '').trim();
+              const sttVadDurationMs = sttResult?.vadDurationMs || null;
+
+              console.log('[PracticePage] STT result:', {
+                text: transcribedText.substring(0, 30),
+                vadDurationMs: sttVadDurationMs,
+                vadDurationSec: sttVadDurationMs ? (sttVadDurationMs / 1000).toFixed(2) : null
+              });
+              if (sttVadDurationMs !== null && sentenceId) {
+                setVadDurationMsBySentenceId((prev) => ({ ...(prev || {}), [sentenceId]: sttVadDurationMs }));
+              }
+
+              if (!transcribedText) {
+                setTranscript('');
+                setSttWarning('STT 결과가 비었습니다. 다시 한 번 말해보세요.');
+                setSttNeedsRetry(false);
+                setSttMismatchInfo(null);
+                setEvaluationResult(null);
+                return;
+              }
+              setTranscript(transcribedText);
+
+              if (currentSentence) {
+                setIsEvaluating(true);
+                try {
+                  const evalRes = await evaluatePronunciation({
+                    originalText: currentSentence.text,
+                    transcribedText: transcribedText,
+                    sentenceId: currentSentence.id,
+                    audioDurationMs: durationMs,
+                  });
+                  if (isCurrent()) setEvaluationResult(evalRes.evaluation);
+                } catch (error) {
+                  console.error('Pronunciation evaluation error:', error);
+                  if (isCurrent()) setEvaluationResult(null);
+                } finally {
+                  if (isCurrent()) setIsEvaluating(false);
+                }
+              }
+
+              dispatch(completePractice({ userSpeakingTime: speakingMs }));
+            } catch (e) {
+              console.error('Whisper STT error:', e);
+              if (!isCurrent()) return;
+              setTranscript('');
+              setSttWarning(e?.message || 'Whisper STT 오류가 발생했습니다.');
+              setSttNeedsRetry(false);
+              setSttMismatchInfo(null);
+              // 메모리 해제: 에러 시 audioBlob과 blobForVad 모두 해제
+              audioBlob = null;
+            } finally {
+              if (!isCurrent()) {
+                // 메모리 해제: 취소 시
+                audioBlob = null;
+                return;
+              }
+              setIsTranscribing(false);
+
+              // VAD 다시듣기: WAV/Blob 생성 없이 WebAudio로 재생할 PCM을 만든다
+              if (!sttResult?.replayPcm) {
+                if (recordingTimerRef.current) {
+                  clearInterval(recordingTimerRef.current);
+                  recordingTimerRef.current = null;
+                }
+                setRecordingDuration(0);
+                return;
+              }
+
+              setIsVadTrimming(true);
+              setVadTrimError(null);
+              try {
+                const replayPcm = sttResult.replayPcm;
+                const sr = Number(sttResult.replaySampleRate || 16000) || 16000;
+                const segs = Array.isArray(vadSegments) ? vadSegments : [];
+
+                // segments(ms) -> sample indices on 16k timeline
+                let totalSamples = 0;
+                const ranges = segs
+                  .map((seg) => {
+                    const sMs = Math.max(0, Number(seg?.start || 0));
+                    const eMs = Math.max(sMs, Number(seg?.end || 0));
+                    const s = Math.max(0, Math.min(replayPcm.length, Math.floor((sMs / 1000) * sr)));
+                    const e = Math.max(s, Math.min(replayPcm.length, Math.floor((eMs / 1000) * sr)));
+                    const len = Math.max(0, e - s);
+                    totalSamples += len;
+                    return { s, e, len };
+                  })
+                  .filter((r) => r.len > 0);
+
+                if (!ranges.length || totalSamples <= 0) {
+                  if (sentenceId) setVadReplayPcmForSentenceId(sentenceId, null);
+                  setVadDurationMsBySentenceId((prev) => ({ ...(prev || {}), [sentenceId]: vadSegmentsDurationMs }));
+                  return;
+                }
+
+                const out = new Float32Array(totalSamples);
+                let off = 0;
+                for (const r of ranges) {
+                  out.set(replayPcm.subarray(r.s, r.e), off);
+                  off += r.len;
+                }
+
+                if (!isCurrent()) return;
+                if (sentenceId) {
+                  setVadReplayPcmForSentenceId(sentenceId, out);
+                  setVadDurationMsBySentenceId((prev) => ({ ...(prev || {}), [sentenceId]: vadSegmentsDurationMs }));
+                }
+              } catch (e) {
+                if (!isCurrent()) return;
+                setVadTrimError(e?.message || 'VAD 오디오 생성에 실패했습니다.');
+                if (sentenceId) setVadReplayPcmForSentenceId(sentenceId, null);
+              } finally {
+                if (isCurrent()) setIsVadTrimming(false);
+              }
+
+              if (recordingTimerRef.current) {
+                clearInterval(recordingTimerRef.current);
+                recordingTimerRef.current = null;
+              }
+              setRecordingDuration(0);
+            }
+          },
+          { label: 'practice_onstop' }
+        );
       };
 
       recorder.start();
@@ -959,7 +973,6 @@ export default function PracticePage() {
   const micProgressPct = isRecordingNow
     ? Math.min(100, Math.max(0, (recordingDuration / MAX_RECORDING_DURATION) * 100))
     : 0;
-  const currentVadUrl = currentSentence?.id ? vadAudioUrlBySentenceId[currentSentence.id] : null;
   const currentVadDurationMs = currentSentence?.id ? vadDurationMsBySentenceId[currentSentence.id] : null;
   const passedCount = Object.values(passedBySentenceId || {}).filter(Boolean).length;
   const isGoalReached = passedCount >= 5;
@@ -1072,7 +1085,9 @@ export default function PracticePage() {
       }
       todayTime={Math.floor(totalTimeMs / 1000 / 60)}
     >
-      <div className="max-w-[800px] w-full mx-auto flex flex-col gap-8">
+      <div className="h-full min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pt-4 pb-8 px-4">
+          <div className="max-w-[800px] w-full mx-auto flex flex-col gap-7">
         {/* Permission Error */}
         {hasCameraPermission === false && (
           <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 flex items-start gap-2">
@@ -1200,7 +1215,7 @@ export default function PracticePage() {
         )}
 
         {/* Daily Progress */}
-        <div className="bg-white dark:bg-gray-900 rounded-xl p-6 shadow-sm border border-gray-100 dark:border-gray-800">
+        <div className="bg-white dark:bg-gray-900 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-800">
           <div className="flex flex-col gap-3">
             <div className="flex gap-6 justify-between items-center">
               <p className="text-[#111418] dark:text-gray-200 text-base font-medium">Daily Progress</p>
@@ -1208,7 +1223,7 @@ export default function PracticePage() {
                 {passedCount} / 5
               </span>
             </div>
-            <div className="rounded-full bg-gray-100 dark:bg-gray-800 h-3 overflow-hidden">
+            <div className="rounded-full bg-gray-100 dark:bg-gray-800 h-2 overflow-hidden">
               <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${progressPercent}%` }} />
             </div>
             <p className="text-gray-500 dark:text-gray-400 text-sm">
@@ -1305,23 +1320,20 @@ export default function PracticePage() {
                 <span className="material-symbols-outlined text-3xl">volume_up</span>
               </button>
 
-              <button
-                type="button"
+              <RecordingButton
+                isRecording={isRecordingNow}
+                progressPercent={micProgressPct}
                 onClick={toggleRecording}
                 disabled={!currentSentence || whisperStatus !== 'ready' || isSpeaking}
-                className="relative flex items-center justify-center rounded-full bg-primary h-24 w-24 text-white shadow-lg shadow-primary/30 hover:scale-105 active:scale-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                title={isRecordingNow ? 'Stop' : 'Record'}
-              >
-                {isRecordingNow && <div className="absolute inset-0 rounded-full border-4 border-primary/20 animate-ping" />}
-                {isRecordingNow ? <ProgressRing valuePercent={micProgressPct} /> : null}
-                <span className="material-symbols-outlined text-4xl">{isRecordingNow ? 'stop' : 'mic'}</span>
-              </button>
+                titleIdle="Record"
+                titleRecording="Stop"
+              />
 
               <button
                 type="button"
                 className="size-16 rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-                onClick={() => playLocalUrl(currentVadUrl)}
-                disabled={!currentSentence || !currentVadUrl || isVadTrimming || isRecordingNow || isSpeaking}
+                onClick={() => playVadForSentenceId(currentSentence?.id)}
+                disabled={!currentSentence || !vadReplayPcmBySentenceIdRef.current?.[currentSentence.id] || isVadTrimming || isRecordingNow || isSpeaking}
                 title="Replay Your Speech"
               >
                 <span className="material-symbols-outlined text-3xl">graphic_eq</span>
@@ -1370,6 +1382,9 @@ export default function PracticePage() {
           </div>
         </div>
 
+          </div>
+        </div>
+
         <FloatingCameraPreview
           videoRef={videoRef}
           canvasRef={canvasRef}
@@ -1378,7 +1393,6 @@ export default function PracticePage() {
           showMouthLandmarks={showMouthLandmarks}
           setShowMouthLandmarks={setShowMouthLandmarks}
         />
-
       </div>
 
       {/* 튜터 피드백 오버레이 - 독립적 컴포넌트 */}

@@ -4,12 +4,14 @@
  * @param {Array<{start: number, end: number}>} segments - VAD 구간 (밀리초)
  * @returns {Promise<Blob>} - 트리밍된 오디오 Blob
  */
+// old_ui 방식: 독립 AudioContext 사용
 export async function extractVADSegments(audioBlob, segments) {
   if (!segments || segments.length === 0) {
     return audioBlob; // VAD 구간이 없으면 원본 반환
   }
 
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const audioContext = new AudioCtx();
 
   try {
     // Blob을 ArrayBuffer로 변환
@@ -66,6 +68,7 @@ export async function extractVADSegments(audioBlob, segments) {
     console.warn('[audioTrimmer] extractVADSegments failed:', e);
     return audioBlob;
   } finally {
+    // old_ui 방식: 즉시 close
     try {
       await audioContext.close();
     } catch (_) {}
@@ -78,12 +81,14 @@ export async function extractVADSegments(audioBlob, segments) {
  * @returns {Promise<Blob>} WAV Blob
  */
 export async function convertAudioBlobToWav(audioBlob) {
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const audioContext = new AudioCtx();
   try {
     const arrayBuffer = await audioBlob.arrayBuffer();
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
     return await audioBufferToWav(audioBuffer);
   } finally {
+    // old_ui 방식: 즉시 close
     try {
       await audioContext.close();
     } catch (_) {}

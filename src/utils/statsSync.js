@@ -83,21 +83,24 @@ export function saveLastSyncInfo(userEmail, date, digest) {
  * @returns {Object} Redux dailyStats 형식
  */
 export function mapBackendToReduxStats(backendStats) {
+  // snake_case와 camelCase 모두 지원 (백엔드 응답 형식에 따라)
   return {
     date: backendStats.date,
-    totalRecordingTime: backendStats.totalRecordingTime || 0,
-    totalSpeakingTime: backendStats.totalSpeakingTime || 0,
-    sessionsCount: backendStats.sessionsCount || 0,
-    practiceCount: backendStats.practiceCount || 0,
-    chatTurnsCount: backendStats.chatTurnsCount || 0,
-    avgPaceRatio: backendStats.avgPaceRatio || 0,
-    avgNetSpeakingDensity: backendStats.avgNetSpeakingDensity || 0,
-    avgResponseQuality: backendStats.avgResponseQuality || 0,
-    avgResponseLatency: backendStats.avgResponseLatency || 0,
+    totalRecordingTime: backendStats.totalRecordingTime ?? backendStats.total_recording_time ?? 0,
+    totalSpeakingTime: backendStats.totalSpeakingTime ?? backendStats.total_speaking_time ?? 0,
+    chatSpeakingTime: backendStats.chatSpeakingTime ?? backendStats.chat_speaking_time ?? 0,
+    practiceSpeakingTime: backendStats.practiceSpeakingTime ?? backendStats.practice_speaking_time ?? 0,
+    sessionsCount: backendStats.sessionsCount ?? backendStats.sessions_count ?? 0,
+    practiceCount: backendStats.practiceCount ?? backendStats.practice_count ?? 0,
+    chatTurnsCount: backendStats.chatTurnsCount ?? backendStats.chat_turns_count ?? 0,
+    avgPaceRatio: backendStats.avgPaceRatio ?? backendStats.avg_pace_ratio ?? 0,
+    avgNetSpeakingDensity: backendStats.avgNetSpeakingDensity ?? backendStats.avg_net_speaking_density ?? 0,
+    avgResponseQuality: backendStats.avgResponseQuality ?? backendStats.avg_response_quality ?? 0,
+    avgResponseLatency: backendStats.avgResponseLatency ?? backendStats.avg_response_latency ?? 0,
     // 누적 평균 계산용 카운터 (메모리 누수 방지)
-    paceRatioCount: backendStats.paceRatioCount || 0,
-    responseQualityCount: backendStats.responseQualityCount || 0,
-    responseLatencyCount: backendStats.responseLatencyCount || 0,
+    paceRatioCount: backendStats.paceRatioCount ?? backendStats.pace_ratio_count ?? 0,
+    responseQualityCount: backendStats.responseQualityCount ?? backendStats.response_quality_count ?? 0,
+    responseLatencyCount: backendStats.responseLatencyCount ?? backendStats.response_latency_count ?? 0,
   };
 }
 
