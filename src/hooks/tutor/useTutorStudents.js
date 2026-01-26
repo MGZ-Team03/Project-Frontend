@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import ws from '../../config/webSocketConfig';
-import { getMyStudents } from '../../api/tutor';
+import { getDashboard } from "../../api/useDashboardData.js";
 
 /**
  * 튜터 학생 목록 관리 훅
@@ -18,31 +18,23 @@ export default function useTutorStudents() {
 
   // 승인된 학생 목록 불러오기
   const loadStudents = useCallback(async () => {
+    if (!user?.email) return; // ✨ 추가: early return
+
     try {
       setLoadingStudents(true);
-      const response = await getMyStudents();
-      
-      const studentList = response.data?.students || response.students || [];
-      
-      const formattedStudents = studentList.map(s => ({
-        email: s.studentEmail || s.student_email || s.email,
-        name: s.studentName || s.student_name || s.name || '이름 없음',
-        activity: null,
-        status: 'inactive',
-        speakingRatio: 0,
-        duration: 0,
-        currentSentence: '',
-        assignedAt: s.assignedAt || s.assigned_at,
-      }));
-      
-      setStudents(formattedStudents);
+      const response = await getDashboard(user.email); // ⚠️ response로 받았는데
+
+      setStudents(response.students || []); // ⚠️ 수정: data → response
+      setSummary(response.summary || { total: 0, active: 0, speaking: 0, warning: 0 }); // ⚠️ 수정: data → response
+
+      console.log("✅ Dashboard 로드 완료"); // ✨ 추가: 성공 로그
     } catch (error) {
-      console.error('학생 목록 로드 실패:', error);
+      console.error('❌ Dashboard 로드 실패:', error); // 🔄 수정: 로그 메시지
       setStudents([]);
     } finally {
       setLoadingStudents(false);
     }
-  }, []);
+  }, [user?.email]);
 
   // WebSocket 메시지 핸들러 - 대시보드 업데이트
   const handleWebSocketMessage = useCallback((data) => {
@@ -54,9 +46,13 @@ export default function useTutorStudents() {
     }
   }, []);
 
-  // 초기 로드
+  // 초기 로드 + 1분마다 폴링
   useEffect(() => {
     loadStudents();
+
+    const interval = setInterval(loadStudents, 60 * 1000);
+
+    return () => clearInterval(interval);
   }, [loadStudents]);
 
   // WebSocket 리스너 등록 (user?.email이 있을 때만)
