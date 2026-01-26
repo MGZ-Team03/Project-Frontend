@@ -41,7 +41,7 @@ import {
   getNetSpeakingDensityFeedback,
   getResponseQualityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
-// import {useStudentStatus} from "../../api/useStudentStatus.js";
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 // server-backed chat + TTS
 
 function clsx(...parts) {
@@ -189,7 +189,8 @@ export default function ChatPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sttError, setSttError] = useState(null);
 
-  // useStudentStatus(user, location);
+  console.log("user ", user)
+  useStudentStatus(user, location);
 
   // Hooks - MediaPipe
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
