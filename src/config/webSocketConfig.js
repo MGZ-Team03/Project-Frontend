@@ -1,4 +1,5 @@
 import { WS_URL } from "../utils/constants.js";
+import {sendStudentStatusSync} from "../api/useStudentStatus.js";
 
 // 순환 참조 방지: store를 외부에서 주입
 let _store = null;
@@ -109,6 +110,14 @@ class WebSocketSingleton {
             this.reconnectTimeout = null;
         }
         this.isReconnecting = false;
+
+        if (this.connectedUserEmail) {
+            const state = _store?.getState();
+            const tutorEmail = state?.auth?.user?.tutorEmail;
+
+            console.log("[WS] inactive 상태 전송:", this.connectedUserEmail);
+            sendStudentStatusSync(this.connectedUserEmail, tutorEmail);
+        }
 
         if (this.socket) {
             this.socket.close();
