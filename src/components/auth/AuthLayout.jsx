@@ -42,10 +42,10 @@ export default function AuthLayout({ title, subtitle, children, showBadges = tru
               </span>
             </div>
             <h1 className="text-white text-5xl font-black leading-tight tracking-tight mb-6">
-              영어, AI로 더 자연스럽게.
+              영어, AI로<br />더 자연스럽게.
             </h1>
             <p className="text-white/90 text-lg font-light leading-relaxed">
-              실시간 음성/학습 데이터 기반으로 말하기를 훈련하고, 더 빠르게 자신감을 쌓아보세요.
+              실시간 음성/학습 데이터 기반으로 말하기를 훈련하고,<br />더 빠르게 자신감을 쌓아보세요.
             </p>
           </div>
         </div>

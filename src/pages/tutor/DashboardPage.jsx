@@ -1,7 +1,8 @@
 // 튜터 실시간 모니터링 대시보드 (Tailwind CSS)
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import TutorLayout from '../../components/common/TutorLayout';
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import FeedbackDialog from '../../components/tutor/FeedbackDialog';
@@ -14,9 +15,12 @@ import useTutorStudentsRedux from '../../hooks/tutor/useTutorStudentsRedux';
 import useTutorFeedback from '../../hooks/tutor/useTutorFeedback';
 import { getStudentStatus } from '../../utils/timeUtils';
 import { getLastActiveText } from '../../utils/dashboardHelpers';
+import { loadLearningLevelsOnce } from '../../store/slices/tutorStatsSlice';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const learningLevelsByEmail = useSelector((state) => state.tutorStats?.learningLevelsByEmail || {});
 
   // 커스텀 훅 사용
   const {
@@ -35,20 +39,27 @@ export default function DashboardPage() {
     refetch,
   } = useTutorStudentsRedux();
 
-  // 60초 폴링은 useTutorStudentsRedux 훅 내부에서 자동 처리됨
+  // 학습 레벨은 세션당 1회만 로딩
+  useEffect(() => {
+    dispatch(loadLearningLevelsOnce());
+  }, [dispatch]);
 
   // 학생 데이터에 상태 정보 추가
   const studentsWithStatus = useMemo(() => {
     return students.map(student => {
       const statusInfo = getStudentStatus(student);
+      const rawLevel = learningLevelsByEmail?.[student.email];
+      const levelDisplay = rawLevel === '상' || rawLevel === '중' || rawLevel === '하' ? rawLevel : '-';
       return {
         ...student,
         statusLabel: statusInfo.status,
         emoji: statusInfo.emoji,
         activity: statusInfo.activity,
+        learningLevelRaw: rawLevel,
+        levelDisplay,
       };
     });
-  }, [students]);
+  }, [students, learningLevelsByEmail]);
 
   // 요약 통계 계산
   const summary = useMemo(() => {
