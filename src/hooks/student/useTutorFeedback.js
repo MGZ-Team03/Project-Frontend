@@ -110,7 +110,7 @@ export default function useTutorFeedback(onAutoExpand) {
   useEffect(() => {
     if (!user?.email) return;
 
-    const socket = ws.connect();
+    const socket = ws.getSocket();
 
     const updateConnectionStatus = () => {
       setIsConnected(socket?.readyState === WebSocket.OPEN);

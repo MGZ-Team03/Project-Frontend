@@ -51,7 +51,16 @@ export default function useTutorNotifications() {
     if (data.type === 'NEW_TUTOR_REQUEST') {
       // SQS → Lambda → DynamoDB 저장 완료 후 뱃지 업데이트를 위해 폴링
       const pollForNotification = async (retryCount = 0, maxRetries = 10) => {
-        await fetchNotifications();
+        try {
+          const result = await getNotifications(false);
+          const notificationList = result?.data?.notifications || [];
+          const count = result?.data?.unreadCount || 0;
+          setNotifications(notificationList);
+          setUnreadCount(count);
+        } catch (error) {
+          console.error('알림 조회 실패:', error);
+        }
+        
         if (retryCount < maxRetries) {
           setTimeout(() => pollForNotification(retryCount + 1, maxRetries), 1000);
         }
@@ -60,26 +69,26 @@ export default function useTutorNotifications() {
       // 1초 후 폴링 시작
       setTimeout(() => pollForNotification(), 1000);
     }
-  }, [fetchNotifications]);
+  }, []); // dependency 제거
 
   // 초기 로드 및 폴링
   useEffect(() => {
-    if (user?.role === 'tutor') {
+    if (user?.role === 'tutor' && user?.email) {
       fetchNotifications();
 
       const interval = setInterval(fetchNotifications, 30000);
       return () => clearInterval(interval);
     }
-  }, [user?.role, fetchNotifications]);
+  }, [user?.role, user?.email, fetchNotifications]);
 
-  // WebSocket 리스너 등록
+  // WebSocket 리스너 등록 (한 번만 등록)
   useEffect(() => {
-    if (user?.role === 'tutor') {
-      ws.connect();
+    if (user?.role === 'tutor' && user?.email) {
+      ws.getSocket();
       const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
       return () => unsubscribe();
     }
-  }, [user?.role, handleWebSocketMessage]);
+  }, [user?.role, user?.email, handleWebSocketMessage]);
 
   return {
     notifications,
