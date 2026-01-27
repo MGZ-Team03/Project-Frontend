@@ -52,6 +52,15 @@ export function getLevelInfo(speakingRatio) {
 }
 
 /**
+ * 학습 레벨 표기 정규화
+ * @param {string|null|undefined} raw - '상'|'중'|'하' 또는 그 외
+ * @returns {'상'|'중'|'하'|'-'}
+ */
+export function normalizeLearningLevel(raw) {
+  return raw === '상' || raw === '중' || raw === '하' ? raw : '-';
+}
+
+/**
  * 마지막 활동 시간 텍스트 반환
  * @param {number} updatedAt - 타임스탬프 (ms)
  * @returns {string} - "방금 전", "5분 전" 등

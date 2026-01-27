@@ -2,6 +2,70 @@ import axios from './axios';
 import ws from "../config/webSocketConfig.js";
 import {sendStudentStatus} from "./useStudentStatus.js";
 
+/**
+ * 전체 학생 학습 레벨 조회 (pagination 지원)
+ * GET /api/auth/students
+ * Response:
+ * {
+ *   success: true,
+ *   students: [{ email, learningLevel }],
+ *   pagination: { nextToken, hasMore, count }
+ * }
+ *
+ * @returns {Promise<Record<string, string>>} email -> learningLevel
+ */
+export const getStudentsLearningLevels = async () => {
+  const result = {};
+  let nextToken = undefined;
+  let hasMore = true;
+  const seenTokens = new Set();
+  let safety = 0;
+
+  while (hasMore) {
+    safety += 1;
+    if (safety > 50) {
+      // pagination 버그/무한루프 방지
+      console.warn('[getStudentsLearningLevels] pagination safety break');
+      break;
+    }
+
+    const response = await axios.get('/api/auth/studentslevel', {
+      params: nextToken ? { nextToken } : undefined,
+    });
+
+    const data = response?.data;
+    if (!data?.success) {
+      throw new Error('학생 학습 레벨 조회 실패');
+    }
+
+    const students = Array.isArray(data.students) ? data.students : [];
+    for (const s of students) {
+      if (s?.email) {
+        result[s.email] = s.learningLevel;
+      }
+    }
+
+    hasMore = data?.pagination?.hasMore === true;
+    nextToken = data?.pagination?.nextToken;
+
+    // 안전장치: nextToken이 없는데 hasMore=true면 탈출
+    if (hasMore && !nextToken) {
+      break;
+    }
+
+    // 안전장치: nextToken이 반복되면 무한루프 가능 → 탈출
+    if (hasMore && nextToken) {
+      if (seenTokens.has(nextToken)) {
+        console.warn('[getStudentsLearningLevels] repeated nextToken, break');
+        break;
+      }
+      seenTokens.add(nextToken);
+    }
+  }
+
+  return result;
+};
+
 
 // 회원가입
 export const register = async (email, password, name, role = 'student') => {
