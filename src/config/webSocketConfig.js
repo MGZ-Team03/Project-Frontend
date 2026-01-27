@@ -12,6 +12,7 @@ class WebSocketSingleton {
         this.connectedUserEmail = null;
         this.reconnectTimeout = null;
         this.isReconnecting = false;
+        this.connectingStartTime = null; // CONNECTING 시작 시간 추적
     }
 
     // store 주입 메서드
@@ -58,12 +59,28 @@ class WebSocketSingleton {
             return null;
         }
 
-        // 같은 사용자로 이미 연결되어 있거나 연결 중이면 재사용
+        // 같은 사용자로 이미 OPEN 상태면 재사용
         if (this.socket &&
-            (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) &&
+            this.socket.readyState === WebSocket.OPEN &&
             this.connectedUserEmail === userEmail) {
             console.log("[WS] 이미 연결됨 - 기존 소켓 반환, readyState:", this.socket.readyState);
             return this.socket;
+        }
+
+        // CONNECTING 상태가 5초 이상 지속되면 타임아웃으로 간주
+        if (this.socket && this.socket.readyState === WebSocket.CONNECTING) {
+            const now = Date.now();
+            const connectingDuration = this.connectingStartTime ? (now - this.connectingStartTime) : 0;
+            
+            if (connectingDuration > 5000) {
+                console.log("[WS] CONNECTING 타임아웃 (5초 초과) - 기존 연결 닫고 재시도");
+                this.socket.close();
+                this.socket = null;
+                this.connectingStartTime = null;
+            } else {
+                console.log(`[WS] CONNECTING 상태 대기 중... (${Math.floor(connectingDuration / 1000)}초 경과)`);
+                return this.socket; // 5초 미만이면 기존 소켓 반환
+            }
         }
 
         // 기존 연결이 열려있으면 닫기
@@ -77,6 +94,7 @@ class WebSocketSingleton {
         console.log("[WS] 연결 시도:", wsUrl);
         this.socket = new WebSocket(wsUrl);
         this.connectedUserEmail = userEmail;
+        this.connectingStartTime = Date.now(); // CONNECTING 시작 시간 기록
         this._setupListeners();
 
         return this.socket;
@@ -140,6 +158,7 @@ class WebSocketSingleton {
         this.socket.onopen = () => {
             console.log("[WS] ✅ 연결 성공!");
             this.isReconnecting = false;
+            this.connectingStartTime = null; // 연결 성공 시 타이머 초기화
             if (this.reconnectTimeout) {
                 clearTimeout(this.reconnectTimeout);
                 this.reconnectTimeout = null;
@@ -170,10 +189,12 @@ class WebSocketSingleton {
 
         this.socket.onclose = (event) => {
             console.log("[WS] 🔌 연결 종료 - code:", event.code, "reason:", event.reason);
+            this.socket = null; // 소켓 참조 제거
             this.connectedUserEmail = null;
+            this.connectingStartTime = null; // 타이머 초기화
 
-            // 5초 후 재연결 시도
-            if (!this.isReconnecting && !this.reconnectTimeout) {
+            // 정상 종료(1000)가 아니면 재연결 시도
+            if (event.code !== 1000 && !this.isReconnecting && !this.reconnectTimeout) {
                 console.log("[WS] 5초 후 재연결 예정...");
                 this.isReconnecting = true;
                 this.reconnectTimeout = setTimeout(() => {
