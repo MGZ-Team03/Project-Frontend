@@ -82,6 +82,17 @@ class WebSocketSingleton {
         return this.socket;
     }
 
+    getSocket() {
+        // 이미 연결되어 있으면 기존 소켓 반환 (로그 없이)
+        if (this.socket?.readyState === WebSocket.OPEN) {
+            return this.socket;
+        }
+        
+        // 연결되어 있지 않으면 새로 연결
+        console.log("[WS] getSocket() 호출 - 소켓이 OPEN 상태 아님 - connect() 호출");
+        return this.connect();
+    }
+
     startSendingData(interval = 50000, getData = () => null) {
         if (this.intervalId) return;
 
@@ -172,10 +183,6 @@ class WebSocketSingleton {
                 }, 5000);
             }
         };
-    }
-
-    getSocket() {
-        return this.socket;
     }
 }
 

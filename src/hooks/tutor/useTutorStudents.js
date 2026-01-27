@@ -150,7 +150,7 @@ export default function useTutorStudents() {
   // WebSocket 리스너 등록 (user?.email이 있을 때만)
   useEffect(() => {
     if (user?.email) {
-      ws.connect();
+      ws.getSocket();
       setWsStatus('connected');
       const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
       return () => unsubscribe();

@@ -10,7 +10,7 @@ import StudentLayout from '../../components/common/StudentLayout';
 import TutorSearchDialog from '../../components/student/TutorSearchDialog';
 import { scenarios } from '../../data/conversation/scenarios';
 import { selectWhisperPreloadStatus } from '../../store/slices/whisperPreloadSlice';
-// import {useStudentStatus} from "../../api/useStudentStatus.js";
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 import { getNotifications } from '../../api/notifications';
 import ws from '../../config/webSocketConfig';
 
@@ -36,7 +36,7 @@ export default function HomePage() {
     } catch (_) {}
   }, []);
 
-  // useStudentStatus(user, location);
+  useStudentStatus(user, location);
   const [tutorSearchOpen, setTutorSearchOpen] = useState(false);
   
   // 알림 관련 state
@@ -112,7 +112,7 @@ export default function HomePage() {
   useEffect(() => {
     if (!studentEmail) return;
     
-    ws.connect();
+    ws.getSocket();
     const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
     return () => unsubscribe();
   }, [studentEmail, handleWebSocketMessage]);

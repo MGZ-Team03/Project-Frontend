@@ -23,7 +23,7 @@ export default function useWebSocket(getData, options={}) {
     }, [onMessage]);
 
     useEffect(() => {
-        const socket = ws.connect();
+        const socket = ws.getSocket();
 
         // 메시지 리스너 항상 등록 (onMessageRef를 통해 최신 핸들러 호출)
         const unsubscribe = ws.addMessageListener((data) => {
