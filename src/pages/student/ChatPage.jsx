@@ -42,7 +42,7 @@ import {
   getNetSpeakingDensityFeedback,
   getResponseQualityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
-// import {useStudentStatus} from "../../api/useStudentStatus.js";
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 // server-backed chat + TTS
 
 function clsx(...parts) {

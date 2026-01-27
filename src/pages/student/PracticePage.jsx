@@ -70,7 +70,7 @@ import {
   getNetSpeakingDensityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
 import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
-// import {useStudentStatus} from "../../api/useStudentStatus.js";
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 
 // Prevent duplicate calls (StrictMode mount/unmount) + add simple cache
 const sentenceBatchInFlight = new Map(); // key -> Promise<{sessionId:string|null, sentences:string[]}>
