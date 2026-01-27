@@ -1,17 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSelector } from 'react-redux';
-import ws from '../../config/webSocketConfig';
-import { useTTSAudio } from '../../hooks/useTTSAudio';
-
-/**
- * 텍스트의 언어를 감지합니다 (한글 포함 여부 확인)
- * @param {string} text
- * @returns {'ko' | 'en'}
- */
-function detectLanguage(text) {
-  // 한글 범위: U+AC00 ~ U+D7AF
-  return /[\uAC00-\uD7AF]/.test(text) ? 'ko' : 'en';
-}
+import { useState, useEffect, useRef } from 'react';
+import useTutorFeedback from '../../hooks/student/useTutorFeedback';
 
 /**
  * 튜터 피드백 오버레이 컴포넌트
@@ -20,148 +8,33 @@ function detectLanguage(text) {
  * - 브라우저 알림 지원
  */
 export default function TutorFeedbackOverlay() {
-  const user = useSelector((state) => state.auth.user);
-  // WebSocket 연결 상태
-  const [isConnected, setIsConnected] = useState(false);
-  const [wsError, setWsError] = useState(null);
-
-  const [feedbacks, setFeedbacks] = useState([]);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const { playText } = useTTSAudio();
   const panelRef = useRef(null);
 
-  // 학생 제어 옵션
-  const [doNotDisturb, setDoNotDisturb] = useState(false);   // 방해금지 모드
-  const [autoExpand, setAutoExpand] = useState(true);         // 자동 패널 확장
-  const [autoPlayTTS, setAutoPlayTTS] = useState(false);     // TTS 자동재생
-
-  // WebSocket 메시지 핸들러 (useCallback으로 메모이제이션)
-  const handleWebSocketMessage = useCallback((message) => {
-    if (message.type === 'feedback') {
-      const newFeedback = {
-        ...message,
-        tutor_email: message.from || message.tutor_email, // 백엔드가 'from' 필드 사용
-        receivedAt: new Date().toISOString(),
-        isRead: false,
-      };
-      
-      // 피드백 저장 및 카운트 증가 (항상 실행)
-      setFeedbacks((prev) => {
-        const updated = [newFeedback, ...prev].slice(0, 20);
-        return updated;
-      });
-      setUnreadCount((prev) => prev + 1);
-      
-      // 방해금지 모드일 때는 알림/확장/TTS 모두 건너뜀
-      if (doNotDisturb) {
-        return;
-      }
-            
-      // 자동 패널 확장 (설정에 따라)
-      if (autoExpand) {
-        setIsExpanded(true);
-      }
-            
-      // 브라우저 알림
-      if ('Notification' in window) {
-        if (Notification.permission === 'granted') {
-          try {
-            const notification = new Notification('튜터 피드백 도착!', {
-              body: message.message || '새로운 피드백이 도착했습니다.',
-              icon: '/tutor-icon.png',
-              badge: '/tutor-badge.png',
-              tag: 'tutor-feedback',
-              requireInteraction: false,
-            });
-          } catch (error) {
-            console.error('❌ 알림 생성 실패:', error);
-          }
-        } else {
-          console.warn('⚠️ 알림 권한 없음:', Notification.permission);
-        }
-      } else {
-        console.error('❌ 브라우저가 Notification API를 지원하지 않습니다');
-      }
-      
-      // TTS 자동 재생 (설정에 따라)
-      const isTTS = message.messageType === 'tts';
-      if (autoPlayTTS && isTTS && message.message) {
-        // audio_url이 있으면 우선 사용, 없으면 브라우저 TTS
-        if (message.audio_url) {
-          const audio = new Audio(message.audio_url);
-          audio.play().catch((err) => {
-            console.error('오디오 재생 실패, 브라우저 TTS로 대체:', err);
-            const language = detectLanguage(message.message);
-            playText(message.message, { language });
-          });
-        } else {
-          const language = detectLanguage(message.message);
-          playText(message.message, { language });
-        }
-      }
-    } else {
-      console.warn('⚠️ 피드백 타입이 아닙니다:', {
-        received_type: message.type,
-        expected: 'feedback',
-        fullMessage: message,
-      });
-    }
-  }, [doNotDisturb, autoExpand, autoPlayTTS, playText]);
-
-  // WebSocket 연결 (Singleton 사용)
-  useEffect(() => {
-    if (!user?.email) return;
-
-    // Singleton WebSocket 연결
-    const socket = ws.connect();
-
-    // 연결 상태 추적
-    const updateConnectionStatus = () => {
-      setIsConnected(socket?.readyState === WebSocket.OPEN);
-    };
-
-    // 초기 상태 설정
-    updateConnectionStatus();
-
-    // 메시지 리스너 등록
-    const unsubscribe = ws.addMessageListener(handleWebSocketMessage);
-
-    // 연결 상태 폴링 (간단한 방법)
-    const statusInterval = setInterval(updateConnectionStatus, 1000);
-
-    return () => {
-      unsubscribe(); // 리스너만 제거, 연결은 유지
-      clearInterval(statusInterval);
-    };
-  }, [user?.email, handleWebSocketMessage]);
-
-  // 브라우저 알림 권한 요청
-  useEffect(() => {
-    if ('Notification' in window) {
-      if (Notification.permission === 'default') {
-        Notification.requestPermission().then((permission) => {
-          if (permission === 'denied') {
-            console.warn('⚠️ 사용자가 알림 권한을 거부했습니다. 브라우저 설정에서 허용해주세요.');
-          }
-        });
-      } else if (Notification.permission === 'denied') {
-        console.warn('⚠️ 알림이 차단되어 있습니다. 브라우저 주소창 왼쪽 자물쇠 아이콘을 클릭하여 알림을 허용해주세요.');
-      }
-    } else {
-      console.error('❌ 이 브라우저는 Notification API를 지원하지 않습니다.');
-    }
-  }, []);
+  const {
+    isConnected,
+    wsError,
+    feedbacks,
+    unreadCount,
+    doNotDisturb,
+    autoExpand,
+    autoPlayTTS,
+    toggleDoNotDisturb,
+    toggleAutoExpand,
+    toggleAutoPlayTTS,
+    markAllAsRead,
+    clearAll,
+    playAudio,
+  } = useTutorFeedback(() => setIsExpanded(true));
 
   // 패널 외부 클릭 시 닫기
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (isExpanded && panelRef.current && !panelRef.current.contains(event.target)) {
-        // FAB 버튼 클릭은 제외
         const fab = event.target.closest('[data-testid="fab-button"]');
         if (!fab) {
           setIsExpanded(false);
-          setUnreadCount(0);
+          markAllAsRead();
         }
       }
     };
@@ -170,57 +43,18 @@ export default function TutorFeedbackOverlay() {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isExpanded]);
+  }, [isExpanded, markAllAsRead]);
 
   // 확장 시 읽음 처리
   useEffect(() => {
     if (isExpanded && unreadCount > 0) {
       const timer = setTimeout(() => {
-        setUnreadCount(0);
-        setFeedbacks((prev) =>
-          prev.map((fb) => ({ ...fb, isRead: true }))
-        );
+        markAllAsRead();
       }, 1000);
       
       return () => clearTimeout(timer);
     }
-  }, [isExpanded, unreadCount]);
-
-  const handlePlayAudio = (text, audioUrl) => {
-    if (audioUrl) {
-      const audio = new Audio(audioUrl);
-      audio.play().catch((err) => {
-        console.error('오디오 재생 실패:', err);
-        // 오디오 재생 실패 시 브라우저 TTS로 대체
-        playBrowserTTS(text);
-      });
-    } else if (text) {
-      // 브라우저 내장 TTS 사용 (서버 API 호출 없음)
-      playBrowserTTS(text);
-    }
-  };
-
-  const playBrowserTTS = (text) => {
-    if (!text || !window.speechSynthesis) return;
-
-    // 기존 음성 중단
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US'; // 영어
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-    
-    utterance.onerror = (e) => console.error('❌ TTS 오류:', e);
-
-    window.speechSynthesis.speak(utterance);
-  };
-
-  const handleClearAll = () => {
-    setFeedbacks([]);
-    setUnreadCount(0);
-  };
+  }, [isExpanded, unreadCount, markAllAsRead]);
 
   // 시간 포맷
   const formatTime = (timestamp) => {
@@ -274,14 +108,7 @@ export default function TutorFeedbackOverlay() {
             <div className="flex items-center gap-1">
               {/* 방해금지 모드 */}
               <button
-                onClick={() => {
-                  const newDND = !doNotDisturb;
-                  setDoNotDisturb(newDND);
-                  if (newDND) {
-                    setAutoExpand(false);
-                    setAutoPlayTTS(false);
-                  }
-                }}
+                onClick={toggleDoNotDisturb}
                 className={`size-8 rounded-lg flex items-center justify-center transition-colors ${
                   doNotDisturb ? 'bg-white/30' : 'hover:bg-white/20'
                 }`}
@@ -294,7 +121,7 @@ export default function TutorFeedbackOverlay() {
               
               {/* 자동 패널 확장 */}
               <button
-                onClick={() => !doNotDisturb && setAutoExpand(!autoExpand)}
+                onClick={toggleAutoExpand}
                 className={`size-8 rounded-lg flex items-center justify-center transition-colors ${
                   autoExpand ? 'bg-white/30' : 'hover:bg-white/20'
                 } ${doNotDisturb ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -305,7 +132,7 @@ export default function TutorFeedbackOverlay() {
               
               {/* TTS 자동재생 */}
               <button
-                onClick={() => !doNotDisturb && setAutoPlayTTS(!autoPlayTTS)}
+                onClick={toggleAutoPlayTTS}
                 className={`size-8 rounded-lg flex items-center justify-center transition-colors ${
                   autoPlayTTS ? 'bg-white/30' : 'hover:bg-white/20'
                 } ${doNotDisturb ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -390,7 +217,7 @@ export default function TutorFeedbackOverlay() {
                   
                   {/* 오디오 재생 버튼 */}
                   <button
-                    onClick={() => handlePlayAudio(fb.message, fb.audio_url)}
+                    onClick={() => playAudio(fb.message, fb.audio_url)}
                     className="size-8 rounded-lg bg-slate-100 dark:bg-slate-800 text-[#137fec] hover:bg-[#137fec] hover:text-white transition-colors flex items-center justify-center shrink-0"
                     title="음성으로 듣기"
                   >
@@ -413,7 +240,7 @@ export default function TutorFeedbackOverlay() {
             </span>
             {feedbacks.length > 0 && (
               <button
-                onClick={handleClearAll}
+                onClick={clearAll}
                 className="ml-auto text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
               >
                 모두 지우기

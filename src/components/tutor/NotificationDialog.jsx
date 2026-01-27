@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -22,21 +22,23 @@ import {
   Cancel as RejectIcon,
   Notifications as NotificationsIcon,
 } from '@mui/icons-material';
-import { getNotifications, markNotificationAsRead } from '../../api/notifications';
-import { processTutorRequest } from '../../api/tutorRegister';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
+import useNotificationHandler from '../../hooks/tutor/useNotificationHandler';
 
-export default function NotificationDialog({ open, onClose, notifications, onUpdate }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [processing, setProcessing] = useState(null);
-  const [confirmDialog, setConfirmDialog] = useState({
-    open: false,
-    requestId: null,
-    studentName: '',
-    studentEmail: ''
-  });
+export default function NotificationDialog({ open, onClose, notifications, onUpdate, onStudentListUpdate }) {
+  const [loading] = useState(false);
+
+  const {
+    processing,
+    error,
+    confirmDialog,
+    handleApprove,
+    handleRejectClick,
+    handleReject,
+    handleRejectCancel,
+    clearError,
+  } = useNotificationHandler(notifications, onUpdate, onStudentListUpdate);
 
   // 읽지 않은 알림 개수
   const unreadCount = notifications.filter(n => !n.read).length;
@@ -49,89 +51,6 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
     } catch {
       return '방금 전';
     }
-  };
-
-  // 승인 처리
-  const handleApprove = async (requestId) => {
-    try {
-      setProcessing(requestId);
-      await processTutorRequest(requestId, 'approve');
-
-      // 알림 읽음 처리
-      const notification = notifications.find(n => n.data?.request_id === requestId);
-      if (notification?.notificationIdTimestamp) {
-        try {
-          await markNotificationAsRead(notification.notificationIdTimestamp);
-        } catch (readErr) {
-          console.error('알림 읽음 처리 실패:', readErr);
-        }
-      }
-
-      // 알림 목록 갱신
-      if (onUpdate) {
-        await onUpdate();
-      }
-    } catch (err) {
-      setError('승인 처리 중 오류가 발생했습니다.');
-      console.error('Approve error:', err);
-    } finally {
-      setProcessing(null);
-    }
-  };
-
-  // 거부 확인 대화상자 열기
-  const handleRejectClick = (requestId, studentName, studentEmail) => {
-    setConfirmDialog({
-      open: true,
-      requestId,
-      studentName,
-      studentEmail
-    });
-  };
-
-  // 실제 거부 처리
-  const handleReject = async () => {
-    const { requestId } = confirmDialog;
-
-    try {
-      setProcessing(requestId);
-      setConfirmDialog({ open: false, requestId: null, studentName: '', studentEmail: '' });
-
-      await processTutorRequest(requestId, 'reject', '현재 학생을 받을 수 없습니다.');
-
-      // 알림 읽음 처리
-      console.log('🔍 찾는 requestId:', requestId);
-      console.log('🔍 notifications:', notifications);
-      const notification = notifications.find(n => n.data?.request_id === requestId);
-      console.log('🔍 찾은 notification:', notification);
-      console.log('🔍 notificationIdTimestamp:', notification?.notificationIdTimestamp);
-      
-      if (notification?.notificationIdTimestamp) {
-        try {
-          await markNotificationAsRead(notification.notificationIdTimestamp);
-          console.log('✅ 읽음 처리 API 호출 완료');
-        } catch (readErr) {
-          console.error('알림 읽음 처리 실패:', readErr);
-        }
-      } else {
-        console.warn('⚠️ notification 또는 notificationIdTimestamp 없음');
-      }
-
-      // 알림 목록 갱신
-      if (onUpdate) {
-        await onUpdate();
-      }
-    } catch (err) {
-      setError('거부 처리 중 오류가 발생했습니다.');
-      console.error('Reject error:', err);
-    } finally {
-      setProcessing(null);
-    }
-  };
-
-  // 거부 확인 대화상자 닫기
-  const handleRejectCancel = () => {
-    setConfirmDialog({ open: false, requestId: null, studentName: '', studentEmail: '' });
   };
 
   return (
@@ -171,7 +90,7 @@ export default function NotificationDialog({ open, onClose, notifications, onUpd
           <Stack spacing={2}>
             {/* 에러 메시지 */}
             {error && (
-              <Alert severity="error" onClose={() => setError(null)}>
+              <Alert severity="error" onClose={clearError}>
                 {error}
               </Alert>
             )}

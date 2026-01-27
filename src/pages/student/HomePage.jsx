@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { checkAuth } from '../../store/slices/authSlice';
 import {
   Snackbar,
   Alert,
@@ -15,6 +16,7 @@ import ws from '../../config/webSocketConfig';
 
 export default function HomePage() {
   const user = useSelector(state => state.auth.user);
+  const dispatch = useDispatch();
   const navigate = useNavigate();
   const whisperStatus = useSelector(selectWhisperPreloadStatus);
   const [practiceDifficulty, setPracticeDifficulty] = useState('중');
@@ -71,10 +73,14 @@ export default function HomePage() {
     }
   };
 
-  // 페이지 로드 시 알림 개수 조회
+  // 페이지 로드 시 알림 개수 조회 + tutorEmail 최신화
   useEffect(() => {
     if (studentEmail) {
       loadUnreadCount();
+      // tutorEmail이 없으면 최신 정보 가져오기
+      if (!user?.tutorEmail) {
+        dispatch(checkAuth());
+      }
     }
   }, [studentEmail]);
 

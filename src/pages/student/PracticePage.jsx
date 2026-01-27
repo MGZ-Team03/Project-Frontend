@@ -121,7 +121,7 @@ export default function PracticePage() {
   const [practiceSessionId, setPracticeSessionId] = useState(null);
   const lastLoadKeyRef = useRef(null);
 
-  useStudentStatus(user, location);
+  const { sendStatus } = useStudentStatus(user, location);
 
   // Hooks
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
@@ -580,6 +580,9 @@ export default function PracticePage() {
 
         // 백엔드 저장은 세션 종료 시 POST /api/sessions/end를 통해 자동으로 이루어집니다.
 
+        // 상태 업데이트: 다음 문장으로 이동
+        sendStatus?.();
+
         setCurrentIndex(nextIndex);
         setValidationResult(null);
         setTranscript('');
@@ -832,6 +835,9 @@ export default function PracticePage() {
               if (sttVadDurationMs !== null && sentenceId) {
                 setVadDurationMsBySentenceId((prev) => ({ ...(prev || {}), [sentenceId]: sttVadDurationMs }));
               }
+
+              // 상태 업데이트: 녹음 완료
+              sendStatus?.();
 
               if (!transcribedText) {
                 setTranscript('');
