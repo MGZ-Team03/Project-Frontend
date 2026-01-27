@@ -42,7 +42,7 @@ import {
   getNetSpeakingDensityFeedback,
   getResponseQualityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
-import {useStudentStatus} from "../../api/useStudentStatus.js";
+// import {useStudentStatus} from "../../api/useStudentStatus.js";
 // server-backed chat + TTS
 
 function clsx(...parts) {
@@ -1018,7 +1018,7 @@ export default function ChatPage() {
                   const bubbleTone = isUser
                     ? 'bg-primary text-white shadow-sm'
                     : isSystem
-                      ? 'rounded-full px-4 py-2 bg-white/80 dark:bg-white/10 border border-gray-100 dark:border-white/10 text-xs font-bold text-gray-600 dark:text-gray-300'
+                      ? 'rounded-2xl px-4 py-2 bg-white/80 dark:bg-white/10 border border-gray-100 dark:border-white/10 text-xs font-bold text-gray-600 dark:text-gray-300'
                       : 'bg-white dark:bg-white/10 border border-gray-100 dark:border-white/10 text-[#111418] dark:text-white';
                   const bubbleAccent = isAssistant && index > 0 ? 'border-l-4 border-primary' : '';
 

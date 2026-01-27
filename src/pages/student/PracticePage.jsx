@@ -70,7 +70,7 @@ import {
   getNetSpeakingDensityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
 import TutorFeedbackOverlay from '../../components/student/TutorFeedbackOverlay';
-import {useStudentStatus} from "../../api/useStudentStatus.js";
+// import {useStudentStatus} from "../../api/useStudentStatus.js";
 
 // Prevent duplicate calls (StrictMode mount/unmount) + add simple cache
 const sentenceBatchInFlight = new Map(); // key -> Promise<{sessionId:string|null, sentences:string[]}>
@@ -181,7 +181,7 @@ export default function PracticePage() {
   }, [dispatch]);
 
   // 실제 발화시간(VAD/MAR) 트래킹: Whisper 스트림 재사용
-  const { speakingMsRef, cameraDetectedMsRef, debugState, finalizeVadSegments } = useSpeechActivityTracker({
+  const { speakingMs, speakingMsRef, cameraDetectedMsRef, debugState, finalizeVadSegments } = useSpeechActivityTracker({
     enabled: isWhisperRecording,
     stream: micStream,
     landmarksRef,
@@ -975,6 +975,13 @@ export default function PracticePage() {
     return `${seconds}초`;
   };
 
+  const formatMmSs = (ms) => {
+    const totalSec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+    const s = String(totalSec % 60).padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
   const isRecordingNow = isWhisperRecording;
   const micProgressPct = isRecordingNow
     ? Math.min(100, Math.max(0, (recordingDuration / MAX_RECORDING_DURATION) * 100))
@@ -1075,6 +1082,10 @@ export default function PracticePage() {
             <h2 className="text-[#111418] dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">
               Sentence Practice
             </h2>
+            <span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-black bg-primary/10 text-primary border border-primary/20">
+              <span className="material-symbols-outlined text-sm">timer</span>
+              {formatMmSs(isWhisperRecording ? speakingMs : lastSpeechDurationMs)}
+            </span>
           </div>
           <div className="flex gap-3">
             <button

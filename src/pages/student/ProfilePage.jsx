@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import StudentLayout from '../../components/common/StudentLayout';
 import useProfileForm from '../../hooks/useProfileForm';
@@ -5,17 +6,16 @@ import ProfileImageSection from '../../components/profile/ProfileImageSection';
 import ProfileToast from '../../components/profile/ProfileToast';
 import ReadOnlyField from '../../components/profile/ReadOnlyField';
 import ProfileFormActions from '../../components/profile/ProfileFormActions';
-
-const LEVELS = [
-  { value: 'beginner', label: '하 (초급)' },
-  { value: 'intermediate', label: '중 (중급)' },
-  { value: 'advanced', label: '상 (고급)' },
-];
+import { getAiLevel } from '../../api/aiLevel';
 
 const THEME_COLOR = '#2b8cee';
 
 export default function ProfilePage() {
   const navigate = useNavigate();
+  const [aiLevelOverride, setAiLevelOverride] = useState('');
+  const [aiLevelLoading, setAiLevelLoading] = useState(false);
+  const [aiLevelError, setAiLevelError] = useState(false);
+  const [aiLevelRefreshBlocked, setAiLevelRefreshBlocked] = useState(false);
   
   const {
     user,
@@ -36,9 +36,40 @@ export default function ProfilePage() {
     setError,
   } = useProfileForm();
 
-  const getLevelLabel = () => {
-    const level = LEVELS.find(l => l.value === user?.learningLevel);
-    return level?.label || '분석 중...';
+  // user.learningLevel이 기본값이고, 새로고침 버튼으로만 서버 평가 요청
+  useEffect(() => {
+    // 유저가 바뀌면(로그인 변경/리프레시) 에러/override 초기화
+    setAiLevelOverride('');
+    setAiLevelError(false);
+    setAiLevelLoading(false);
+    setAiLevelRefreshBlocked(false);
+  }, [user?.email]);
+
+  const handleRefreshAiLevel = async () => {
+    setAiLevelLoading(true);
+    setAiLevelError(false);
+
+    try {
+      const { success: ok, level } = await getAiLevel();
+      if (ok && level) {
+        setAiLevelOverride(level);
+      } else {
+        // 서버 응답은 왔지만 success=false (또는 level 비어있음)인 경우: 버튼 비활성화
+        setAiLevelError(true);
+        setAiLevelRefreshBlocked(true);
+      }
+    } catch (e) {
+      setAiLevelError(true);
+    } finally {
+      setAiLevelLoading(false);
+    }
+  };
+
+  const getAiLevelValue = () => {
+    const baseLevel = user?.learningLevel;
+    const level = aiLevelOverride || baseLevel;
+    if (level) return level;
+    return '';
   };
 
   return (
@@ -83,15 +114,44 @@ export default function ProfilePage() {
 
               <ReadOnlyField
                 label="학습 레벨 (AI 분석)"
-                value={getLevelLabel()}
-                description="전월 학습 데이터를 기반으로 자동 산출됩니다"
+                value={getAiLevelValue()}
+                description={
+                  aiLevelError
+                    ? '학습 레벨 평가 요청에 실패했습니다. 하루에 한 번만 시도해주세요.'
+                    : (user?.learningLevel || aiLevelOverride)
+                        ? ''
+                        : '학습 레벨이 아직 없습니다. 오른쪽 버튼을 눌러 레벨 평가를 요청하세요.'
+                }
+                descriptionClassName={
+                  aiLevelError || (!user?.learningLevel && !aiLevelOverride)
+                    ? 'text-red-600 dark:text-red-400'
+                    : ''
+                }
+                inputClassName={aiLevelError ? 'border-red-200 dark:border-red-500/40' : ''}
+                endAdornment={
+                  <button
+                    type="button"
+                    onClick={handleRefreshAiLevel}
+                    disabled={aiLevelLoading || aiLevelRefreshBlocked}
+                    aria-label="학습 레벨 새로고침"
+                    className={[
+                      'inline-flex items-center justify-center w-9 h-9 rounded-md',
+                      'text-slate-500 dark:text-slate-400 hover:text-[#2b8cee] hover:bg-[#2b8cee]/10',
+                      'disabled:opacity-50 disabled:cursor-not-allowed',
+                    ].join(' ')}
+                  >
+                    <span className="material-symbols-outlined text-[20px]">
+                      {aiLevelLoading ? 'progress_activity' : 'refresh'}
+                    </span>
+                  </button>
+                }
               />
 
               <div className="bg-[#2b8cee]/5 dark:bg-[#2b8cee]/10 border border-[#2b8cee]/20 rounded-xl p-4 flex gap-4">
                 <span className="material-symbols-outlined text-[#2b8cee]">auto_awesome</span>
                 <p className="text-sm text-slate-600 dark:text-[#a0aec0]">
                   <strong className="text-[#111418] dark:text-white">AI 안내:</strong>{' '}
-                  학습 레벨은 지난달 학습 데이터를 분석하여 자동으로 산출됩니다.
+                  학습 레벨은 최근 10개의 AI 대화로 당신의 영어실력을 평가합니다.
                 </p>
               </div>
             </form>

@@ -19,7 +19,7 @@ export const sendStudentStatus = async (userEmail, tutorEmail, page) => {
             studentEmail: userEmail,
             tutorEmail: tutorEmail,
             status: page === "/logout" ? "inactive" : "active",
-            room: page === "/chat" ? "ai" : page === "/practice" ? "sentence" : "no room",
+            room: page === "/chat" ? "ai chat" : page === "/practice" ? "sentence" : "no room",
         }
     }
 

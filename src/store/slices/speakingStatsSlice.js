@@ -213,8 +213,9 @@ export const uploadDailyStatsOnRecordingEnd = createAsyncThunk(
         if (safeVadMs <= 0) {
           return { skipped: true, reason: 'no_user_speech_vad' };
         }
+        console.log('dailyStats.chatTurnsCount', dailyStats.chatTurnsCount);
         // 사용자 메시지 전송(턴) 자체가 없으면 skip
-        if ((dailyStats.chatTurnsCount || 0) === 0) {
+        if ((dailyStats.chatTurnsCount || 1) === 1) { // 항상 ai가 먼저 말해서 1턴은 먹고 시작함
           return { skipped: true, reason: 'no_chat_turns' };
         }
       }
