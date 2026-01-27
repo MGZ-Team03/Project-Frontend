@@ -5,7 +5,7 @@ import { getNotifications } from '../../api/notifications';
 
 /**
  * 튜터 알림 관리 훅
- * - 알림 목록 조회 (초기 로드 + 60초 폴링)
+ * - 알림 목록 조회 (초기 로드 + 30초 폴링)
  * - WebSocket 실시간 알림 수신
  * - 읽지 않은 알림 개수 관리
  */
@@ -74,10 +74,14 @@ export default function useTutorNotifications() {
   // 초기 로드 및 폴링
   useEffect(() => {
     if (user?.role === 'tutor' && user?.email) {
-      fetchNotifications();
+      // 토큰 저장 타이밍 보장을 위한 최소 지연
+      const timeout = setTimeout(fetchNotifications, 100);
 
       const interval = setInterval(fetchNotifications, 30000);
-      return () => clearInterval(interval);
+      return () => {
+        clearTimeout(timeout);
+        clearInterval(interval);
+      };
     }
   }, [user?.role, user?.email, fetchNotifications]);
 

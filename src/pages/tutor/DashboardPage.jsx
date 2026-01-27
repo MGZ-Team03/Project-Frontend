@@ -1,6 +1,6 @@
 // 튜터 실시간 모니터링 대시보드 (Tailwind CSS)
 
-import { useMemo, useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import TutorLayout from '../../components/common/TutorLayout';
@@ -11,7 +11,7 @@ import StatsSummaryCards from '../../components/tutor/StatsSummaryCards';
 import StudentTable from '../../components/tutor/StudentTable';
 import RealTimeActivitySidebar from '../../components/tutor/RealTimeActivitySidebar';
 import useTutorNotifications from '../../hooks/tutor/useTutorNotifications';
-import { useTutorStudents } from '../../api/useTutorStudents';
+import useTutorStudentsRedux from '../../hooks/tutor/useTutorStudentsRedux';
 import useTutorFeedback from '../../hooks/tutor/useTutorFeedback';
 import { getStudentStatus } from '../../utils/timeUtils';
 import { getLastActiveText } from '../../utils/dashboardHelpers';
@@ -37,21 +37,12 @@ export default function DashboardPage() {
     loading: loadingStudents,
     error,
     refetch,
-  } = useTutorStudents();
+  } = useTutorStudentsRedux();
 
   // 학습 레벨은 세션당 1회만 로딩
   useEffect(() => {
     dispatch(loadLearningLevelsOnce());
   }, [dispatch]);
-
-  // 60초마다 자동 새로고침 (Polling)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      refetch();
-    }, 60000); // 60초
-
-    return () => clearInterval(interval);
-  }, [refetch]);
 
   // 학생 데이터에 상태 정보 추가
   const studentsWithStatus = useMemo(() => {
