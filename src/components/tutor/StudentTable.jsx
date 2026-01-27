@@ -1,7 +1,20 @@
 // 학생 테이블 컴포넌트
 
 import { useState, useMemo } from 'react';
-import { getStatusStyles, getStatusLabel, getLevelInfo, getLastActiveText } from '../../utils/dashboardHelpers';
+import { getStatusStyles, getStatusLabel, getLastActiveText } from '../../utils/dashboardHelpers';
+
+function getLearningLevelBadge(levelDisplay) {
+  switch (levelDisplay) {
+    case '상':
+      return { label: '상', cls: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' };
+    case '중':
+      return { label: '중', cls: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' };
+    case '하':
+      return { label: '하', cls: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300' };
+    default:
+      return { label: '-', cls: 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300' };
+  }
+}
 
 export default function StudentTable({ 
   students, 
@@ -27,11 +40,8 @@ export default function StudentTable({
       const matchesStatus = statusFilter === 'all' || student.statusLabel === statusFilter;
       
       // 레벨 필터
-      let matchesLevel = true;
-      if (levelFilter !== 'all') {
-        const level = getLevelInfo(student.speakingRatio || 0).label.toLowerCase();
-        matchesLevel = level === levelFilter.toLowerCase();
-      }
+      const levelValue = student.levelDisplay || '-';
+      const matchesLevel = levelFilter === 'all' || levelValue === levelFilter;
       
       return matchesSearch && matchesStatus && matchesLevel;
     });
@@ -72,10 +82,10 @@ export default function StudentTable({
             className="flex h-10 items-center justify-center gap-2 rounded-lg bg-[#f0f2f4] dark:bg-gray-800 px-4 text-sm font-medium hover:bg-[#e4e6e9] dark:hover:bg-gray-700 transition-colors border-none focus:ring-0 cursor-pointer"
           >
             <option value="all">레벨: 전체</option>
-            <option value="advanced">Advanced</option>
-            <option value="intermediate">Intermediate</option>
-            <option value="elementary">Elementary</option>
-            <option value="beginner">Beginner</option>
+            <option value="상">상</option>
+            <option value="중">중</option>
+            <option value="하">하</option>
+            <option value="-">-</option>
           </select>
         </div>
       </div>
@@ -87,7 +97,7 @@ export default function StudentTable({
             <tr className="bg-[#f0f2f4]/50 dark:bg-gray-800/50 text-[#617589] text-xs font-semibold uppercase tracking-wider">
               <th className="px-6 py-4">학생</th>
               <th className="px-6 py-4">상태</th>
-              <th className="px-6 py-4">발음 레벨</th>
+              <th className="px-6 py-4">레벨</th>
               <th className="px-6 py-4">마지막 활동</th>
               <th className="px-6 py-4 text-right">액션</th>
             </tr>
@@ -111,7 +121,7 @@ export default function StudentTable({
             ) : (
               filteredStudents.map((student) => {
                 const statusStyles = getStatusStyles(student.statusLabel);
-                const levelInfo = getLevelInfo(student.speakingRatio || 0);
+                const levelBadge = getLearningLevelBadge(student.levelDisplay);
                 
                 return (
                   <tr 
@@ -140,17 +150,9 @@ export default function StudentTable({
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1">
-                        <span className={`text-xs font-semibold ${levelInfo.color}`}>
-                          {levelInfo.label}
-                        </span>
-                        <div className="w-24 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                          <div 
-                            className="bg-[#137fec] h-full transition-all duration-300" 
-                            style={{ width: `${student.speakingRatio || levelInfo.percent}%` }}
-                          ></div>
-                        </div>
-                      </div>
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${levelBadge.cls}`}>
+                        {levelBadge.label}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-sm text-[#617589]">
                       {getLastActiveText(student.updated_at)}

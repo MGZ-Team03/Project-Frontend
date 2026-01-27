@@ -2,6 +2,7 @@
 
 import { useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import TutorLayout from '../../components/common/TutorLayout';
 import FeedbackNotification from '../../components/tutor/FeedbackNotification';
 import FeedbackDialog from '../../components/tutor/FeedbackDialog';
@@ -14,9 +15,12 @@ import { useTutorStudents } from '../../api/useTutorStudents';
 import useTutorFeedback from '../../hooks/tutor/useTutorFeedback';
 import { getStudentStatus } from '../../utils/timeUtils';
 import { getLastActiveText } from '../../utils/dashboardHelpers';
+import { loadLearningLevelsOnce } from '../../store/slices/tutorStatsSlice';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const learningLevelsByEmail = useSelector((state) => state.tutorStats?.learningLevelsByEmail || {});
 
   // 커스텀 훅 사용
   const {
@@ -35,6 +39,11 @@ export default function DashboardPage() {
     refetch,
   } = useTutorStudents();
 
+  // 학습 레벨은 세션당 1회만 로딩
+  useEffect(() => {
+    dispatch(loadLearningLevelsOnce());
+  }, [dispatch]);
+
   // 60초마다 자동 새로고침 (Polling)
   useEffect(() => {
     const interval = setInterval(() => {
@@ -48,14 +57,18 @@ export default function DashboardPage() {
   const studentsWithStatus = useMemo(() => {
     return students.map(student => {
       const statusInfo = getStudentStatus(student);
+      const rawLevel = learningLevelsByEmail?.[student.email];
+      const levelDisplay = rawLevel === '상' || rawLevel === '중' || rawLevel === '하' ? rawLevel : '-';
       return {
         ...student,
         statusLabel: statusInfo.status,
         emoji: statusInfo.emoji,
         activity: statusInfo.activity,
+        learningLevelRaw: rawLevel,
+        levelDisplay,
       };
     });
-  }, [students]);
+  }, [students, learningLevelsByEmail]);
 
   // 요약 통계 계산
   const summary = useMemo(() => {
