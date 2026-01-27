@@ -7,10 +7,18 @@ import {
   Typography,
   Button,
   Chip,
+  IconButton,
+  Badge,
 } from '@mui/material';
-import { Logout, School, Person } from '@mui/icons-material';
+import { Logout, School, Person, PersonAdd, Notifications, AccountCircle } from '@mui/icons-material';
 
-export default function Header({ todayTime = 0, studentCount = 0 }) {
+export default function Header({ 
+  todayTime = 0, 
+  studentCount = 0, 
+  onTutorSearchClick,
+  onNotificationClick,
+  unreadNotificationCount = 0,
+}) {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
@@ -62,12 +70,49 @@ export default function Header({ todayTime = 0, studentCount = 0 }) {
           />
         )}
 
+        {/* 학생 전용: 튜터 찾기 버튼 (알림 배지 포함) */}
+        {isStudent && onTutorSearchClick && (
+          <Badge badgeContent={unreadNotificationCount} color="error" sx={{ mr: 2 }}>
+            <Button
+              variant="contained"
+              startIcon={<PersonAdd />}
+              onClick={onTutorSearchClick}
+            >
+              튜터 찾기
+            </Button>
+          </Badge>
+        )}
+
+        {/* 튜터 전용: 알림 아이콘 */}
+        {isTutor && onNotificationClick && (
+          <IconButton
+            onClick={onNotificationClick}
+            sx={{ mr: 1 }}
+            color="primary"
+          >
+            <Badge badgeContent={unreadNotificationCount} color="error">
+              <Notifications />
+            </Badge>
+          </IconButton>
+        )}
+
         <Chip 
           label={isStudent ? '학생' : isTutor ? '튜터' : '게스트'}
           size="small"
           color={isStudent ? 'info' : isTutor ? 'secondary' : 'default'}
           sx={{ mr: 2 }}
         />
+        
+        {/* 프로필 버튼 */}
+        <IconButton
+          onClick={() => navigate('/profile')}
+          sx={{ mr: 1 }}
+          color="primary"
+          title="프로필 설정"
+        >
+          <AccountCircle />
+        </IconButton>
+        
         <Typography variant="body2" sx={{ mr: 2 }}>
           {user?.name || user?.email}
         </Typography>

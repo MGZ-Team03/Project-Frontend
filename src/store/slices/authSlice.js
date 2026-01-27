@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { login as cognitoLogin, logout as cognitoLogout, getCurrentUser } from '../../api/auth';
+import { login as cognitoLogin, logout as cognitoLogout, getCurrentUser, updateProfile as apiUpdateProfile } from '../../api/auth';
+import { getStorageKey } from '../../utils/storageKeys';
 
 // 로그인 액션
 export const login = createAsyncThunk(
@@ -16,7 +17,16 @@ export const login = createAsyncThunk(
 );
 
 // 로그아웃 액션
-export const logout = createAsyncThunk('auth/logout', async () => {
+export const logout = createAsyncThunk('auth/logout', async (_, { getState }) => {
+  const { user } = getState().auth;
+
+  // Clear user-specific stats before logging out
+  if (user?.email) {
+    const statsKey = getStorageKey(user.email);
+    localStorage.removeItem(statsKey);
+    console.log(`✓ Cleared stats for ${user.email}`);
+  }
+
   cognitoLogout();
   return null;
 });
@@ -29,6 +39,19 @@ export const checkAuth = createAsyncThunk('auth/checkAuth', async () => {
   }
   return user;
 });
+
+// 프로필 업데이트
+export const updateProfile = createAsyncThunk(
+  'auth/updateProfile',
+  async (profileData, { rejectWithValue }) => {
+    try {
+      const updatedUser = await apiUpdateProfile(profileData);
+      return updatedUser;
+    } catch (error) {
+      return rejectWithValue(error.message || '프로필 업데이트 실패');
+    }
+  }
+);
 
 const initialState = {
   user: JSON.parse(localStorage.getItem('user')) || null,
@@ -70,6 +93,19 @@ const authSlice = createSlice({
       .addCase(checkAuth.fulfilled, (state, action) => {
         state.isAuthenticated = !!action.payload;
         state.user = action.payload;
+      })
+      // 프로필 업데이트
+      .addCase(updateProfile.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(updateProfile.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.user = { ...state.user, ...action.payload };
+      })
+      .addCase(updateProfile.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload;
       });
   },
 });

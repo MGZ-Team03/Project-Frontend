@@ -1,11 +1,11 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BottomNavigation, BottomNavigationAction } from '@mui/material';
-import { MenuBook, Chat, BarChart } from '@mui/icons-material';
+import { Home, BarChart, Info } from '@mui/icons-material';
 
 const navItems = [
-  { label: '연습', icon: <MenuBook />, path: '/practice' },
-  { label: '대화', icon: <Chat />, path: '/chat' },
+  { label: '홈', icon: <Home />, path: '/home' },
   { label: '통계', icon: <BarChart />, path: '/stats' },
+  { label: '소개', icon: <Info />, path: '/introduce' },
 ];
 
 export default function BottomNav() {

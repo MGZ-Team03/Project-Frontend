@@ -17,6 +17,7 @@ Axios 인스턴스 설정
 ### 2. auth.js ✅ (구현됨)
 Cognito 인증 함수
 
+
 **함수:**
 - `login(email, password)` - 로그인
 - `logout()` - 로그아웃

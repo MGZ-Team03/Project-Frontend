@@ -50,3 +50,7 @@ lerna-debug.log*
 # Temporary files
 *.tmp
 *.temp
+
+# Editor
+.cursor/
+.idea/
