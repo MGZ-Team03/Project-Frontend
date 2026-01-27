@@ -100,7 +100,7 @@ export default function TutorFeedbackOverlay() {
                 <h4 className="font-bold text-sm leading-tight">튜터 피드백</h4>
                 <p className="text-[10px] text-white/80 uppercase tracking-wider font-bold flex items-center gap-1">
                   <span className={`size-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></span>
-                  {isConnected ? '실시간 연결 중' : '연결 안됨'}
+                  {isConnected ? '연결 중' : '연결 안됨'}
                 </p>
               </div>
             </div>
@@ -236,7 +236,7 @@ export default function TutorFeedbackOverlay() {
           }`}>
             <span className={`size-2 rounded-full animate-pulse ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
             <span className={`text-xs font-medium ${isConnected ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-              {isConnected ? '실시간 연결 중' : '연결 안됨'}
+              {isConnected ? '연결 중' : '연결 안됨'}
             </span>
             {feedbacks.length > 0 && (
               <button

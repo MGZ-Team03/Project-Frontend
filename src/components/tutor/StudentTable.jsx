@@ -215,7 +215,7 @@ export default function StudentTable({
         <div className="flex items-center gap-3 text-xs text-[#617589]">
           <span className={`size-2 rounded-full ${loading ? 'bg-yellow-500' : error ? 'bg-red-500' : 'bg-green-500'}`}></span>
           {loading ? '로딩 중...' : error ? '연결 오류' : 'API 연결됨'}
-          <span className="ml-2">자동 새로고침: 30초</span>
+          <span className="ml-2">자동 새로고침: 60초</span>
           <button
             onClick={onRefresh}
             disabled={loading}

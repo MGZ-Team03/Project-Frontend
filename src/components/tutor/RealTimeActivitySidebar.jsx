@@ -60,7 +60,7 @@ export default function RealTimeActivitySidebar({
           </div>
           <div className="flex justify-between items-center text-xs">
             <span className="text-[#617589]">자동 새로고침</span>
-            <span className="font-bold text-[#137fec]">30초</span>
+            <span className="font-bold text-[#137fec]">60초</span>
           </div>
         </div>
       </div>
