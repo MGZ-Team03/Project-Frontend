@@ -42,7 +42,7 @@ import {
   getNetSpeakingDensityFeedback,
   getResponseQualityFeedback,
 } from '../../store/selectors/speakingStatsSelectors';
-// import {useStudentStatus} from "../../api/useStudentStatus.js";
+import {useStudentStatus} from "../../api/useStudentStatus.js";
 // server-backed chat + TTS
 
 function clsx(...parts) {
@@ -189,10 +189,7 @@ export default function ChatPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sttError, setSttError] = useState(null);
 
-  useEffect(() => {
-    console.log('user ', user);
-  }, [user]);
-  // useStudentStatus(user, location);
+  const { sendStatus } = useStudentStatus(user, location);
 
   // Hooks - MediaPipe
   const { landmarksRef, isModelLoaded, error: mediaPipeError } = useMediaPipe(
@@ -268,12 +265,13 @@ export default function ChatPage() {
     const pcm = lastVadReplayPcmRef.current || null;
     if (!pcm) return;
     setReplayError(null);
+    sendStatus?.();
     try {
       await playVadReplay({ pcm, sampleRate: 16000 });
     } catch (e) {
       setReplayError(e?.message || '오디오 재생에 실패했습니다.');
     }
-  }, []);
+  }, [sendStatus]);
 
   useEffect(() => {
     return () => {

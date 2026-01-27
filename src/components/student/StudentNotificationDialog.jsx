@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -23,57 +22,18 @@ import {
   Notifications as NotificationsIcon,
   Info as InfoIcon,
 } from '@mui/icons-material';
-import { getNotifications, markNotificationAsRead } from '../../api/notifications';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
+import useStudentNotifications from '../../hooks/student/useStudentNotifications';
 
 export default function StudentNotificationDialog({ open, onClose, onUpdate }) {
-  const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  // 알림 불러오기
-  useEffect(() => {
-    if (open) {
-      loadNotifications();
-    }
-  }, [open]);
-
-  const loadNotifications = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      // 안 읽은 알림만 조회
-      const response = await getNotifications(false);
-      
-      // 백엔드 응답: { data: { notifications: [...], unreadCount: n } }
-      setNotifications(response.data?.notifications || []);
-    } catch (err) {
-      console.error('알림 조회 실패:', err);
-      setError('알림을 불러오는 데 실패했습니다.');
-      setNotifications([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 알림 읽음 처리
-  const handleMarkAsRead = async (notificationIdTimestamp) => {
-    try {
-      await markNotificationAsRead(notificationIdTimestamp);
-      
-      // 목록에서 제거 (notificationIdTimestamp로 필터링)
-      setNotifications(prev => prev.filter(n => n.notificationIdTimestamp !== notificationIdTimestamp));
-      
-      // 부모 컴포넌트에 알림
-      if (onUpdate) {
-        onUpdate();
-      }
-    } catch (err) {
-      console.error('알림 읽음 처리 실패:', err);
-    }
-  };
+  const {
+    notifications,
+    loading,
+    error,
+    handleMarkAsRead,
+    clearError,
+  } = useStudentNotifications(open, onUpdate);
 
   // 시간 포맷팅
   const formatTime = (timestamp) => {
@@ -153,7 +113,7 @@ export default function StudentNotificationDialog({ open, onClose, onUpdate }) {
         <Stack spacing={2}>
           {/* 에러 메시지 */}
           {error && (
-            <Alert severity="error" onClose={() => setError(null)}>
+            <Alert severity="error" onClose={clearError}>
               {error}
             </Alert>
           )}
@@ -231,7 +191,7 @@ export default function StudentNotificationDialog({ open, onClose, onUpdate }) {
                     <Button
                       size="small"
                       variant="outlined"
-                      onClick={() => handleMarkAsRead(notification.notificationIdTimestamp)}
+                      onClick={() => handleMarkAsRead(notification.notificationIdTimestamp, notification.type)}
                     >
                       확인
                     </Button>
