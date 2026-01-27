@@ -92,6 +92,9 @@ export default function PracticePage() {
   const avgPaceRatio = useSelector(selectDailyAvgPaceRatio);
   const netDensity = useSelector(selectNetSpeakingDensity);
   const avgNetDensity = useSelector(selectDailyAvgNetSpeakingDensity);
+  const dailySpeakingMs = useSelector((state) => state.speakingStats?.dailyStats?.totalSpeakingTime || 0);
+  const sessionSpeakingMs = useSelector((state) => state.speakingStats?.currentSession?.userSpeakingTime || 0);
+  const totalSpeakingMs = Math.max(0, (dailySpeakingMs || 0) + (sessionSpeakingMs || 0));
 
   // Refs
   const videoRef = useRef(null);
@@ -1084,7 +1087,7 @@ export default function PracticePage() {
             </h2>
             <span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-black bg-primary/10 text-primary border border-primary/20">
               <span className="material-symbols-outlined text-sm">timer</span>
-              {formatMmSs(isWhisperRecording ? speakingMs : lastSpeechDurationMs)}
+              {formatMmSs(totalSpeakingMs)}
             </span>
           </div>
           <div className="flex gap-3">

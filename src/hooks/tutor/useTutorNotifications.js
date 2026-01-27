@@ -5,7 +5,7 @@ import { getNotifications } from '../../api/notifications';
 
 /**
  * 튜터 알림 관리 훅
- * - 알림 목록 조회 (초기 로드 + 30초 폴링)
+ * - 알림 목록 조회 (초기 로드 + 60초 폴링)
  * - WebSocket 실시간 알림 수신
  * - 읽지 않은 알림 개수 관리
  */

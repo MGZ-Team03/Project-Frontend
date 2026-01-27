@@ -35,11 +35,11 @@ export default function DashboardPage() {
     refetch,
   } = useTutorStudents();
 
-  // 30초마다 자동 새로고침 (Polling)
+  // 60초마다 자동 새로고침 (Polling)
   useEffect(() => {
     const interval = setInterval(() => {
       refetch();
-    }, 30000); // 30초
+    }, 60000); // 60초
 
     return () => clearInterval(interval);
   }, [refetch]);

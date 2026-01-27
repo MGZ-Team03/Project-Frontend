@@ -31,6 +31,7 @@ export const getWeeklyStats = async (studentEmail) => {
  * @returns {Promise<Object>}
  */
 export const postDailyStats = async (payload) => {
-  const response = await api.post('/api/statistics/daily', payload);
+  // 서버 스펙 변경: 녹음 종료 후 통계 업서트는 today 엔드포인트로 통일
+  const response = await api.post('/api/statistics/today', payload);
   return response.data;
 };
