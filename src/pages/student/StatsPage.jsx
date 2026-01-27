@@ -139,19 +139,18 @@ export default function StatsPage() {
 
   const dailyStats = useApiDailyStats ? dailyStatsApi : reduxDailyStats;
 
-  // 주간 통계에서 daily 배열과 summary 추출
-  const { dailyList, summary } = useMemo(() => {
+  // 주간 통계에서 daily 배열과 summary 추출 + delta 계산
+  const { dailyList, summary, deltaRecording, deltaSpeaking, deltaPractice, deltaChatTurns } = useMemo(() => {
     const week = weeklyStatsApi;
 
     // 새 API 응답 구조: { daily: [...], summary: {...} }
     const daily = week?.daily || [];
     const summaryData = week?.summary || {};
 
-    // daily 배열을 Redux 형식으로 매핑
+    // daily 배열을 Redux 형식으로 매핑 (백엔드 포맷: snake_case)
     const mappedDaily = daily.map((d) => {
       if (!d || typeof d !== 'object') return mapBackendToReduxStats({});
 
-      // snake_case → camelCase 변환
       const camel = {
         date: d.date,
         totalRecordingTime: d.total_recording_time,
@@ -169,6 +168,15 @@ export default function StatsPage() {
 
     // 오늘 날짜 (YYYY-MM-DD)
     const todayStr = new Date().toISOString().split('T')[0];
+
+    // 백엔드 오늘 데이터 (summary에 이미 포함되어 있음)
+    const backendToday = mappedDaily.find((d) => d.date === todayStr) || {};
+
+    // 로컬이 백엔드보다 큰 경우만 차액 계산 (세션 중 아직 동기화 안 된 증가분)
+    const dRecording = Math.max(0, (dailyStats?.totalRecordingTime || 0) - (backendToday.totalRecordingTime || 0));
+    const dSpeaking = Math.max(0, (dailyStats?.totalSpeakingTime || 0) - (backendToday.totalSpeakingTime || 0));
+    const dPractice = Math.max(0, (dailyStats?.practiceCount || 0) - (backendToday.practiceCount || 0));
+    const dChatTurns = Math.max(0, (dailyStats?.chatTurnsCount || 0) - (backendToday.chatTurnsCount || 0));
 
     // dailyStats(로컬)에 유효한 데이터가 있는지 확인
     const hasTodayData = (dailyStats?.totalRecordingTime || 0) > 0 ||
@@ -197,21 +205,26 @@ export default function StatsPage() {
     return {
       dailyList: finalDaily,
       summary: summaryData,
+      deltaRecording: dRecording,
+      deltaSpeaking: dSpeaking,
+      deltaPractice: dPractice,
+      deltaChatTurns: dChatTurns,
     };
   }, [weeklyStatsApi, dailyStats]);
 
   const weeklyList = dailyList;
 
   // summary 우선 사용, 없으면 weeklyList에서 계산
+  // summary는 오늘 포함 7일치이므로, 세션 중 아직 동기화 안 된 delta만 추가
   const kpiData = useMemo(() => {
     if (summary && Object.keys(summary).length > 0) {
       return {
-        totalTime: { value: formatTime(summary.total_recording_time || 0), change: 0, unit: '' },
-        conversations: { value: summary.total_chat_turns || 0, change: 0, unit: '' },
+        totalTime: { value: formatTime((summary.total_recording_time || 0) + deltaRecording), change: 0, unit: '' },
+        conversations: { value: (summary.total_chat_turns || 0) + deltaChatTurns, change: 0, unit: '' },
         activeDays: { value: `${summary.active_days || 0} Days`, change: 0, unit: '' },
         confidence: { value: `${(summary.avg_response_quality || 0).toFixed(1)}점`, change: 0, unit: '' },
-        speakingTime: { value: formatTime(summary.total_speaking_time || 0), change: 0, unit: '' },
-        practiceCount: { value: summary.total_practice_count || 0, change: 0, unit: '회' },
+        speakingTime: { value: formatTime((summary.total_speaking_time || 0) + deltaSpeaking), change: 0, unit: '' },
+        practiceCount: { value: (summary.total_practice_count || 0) + deltaPractice, change: 0, unit: '회' },
       };
     }
 
@@ -234,7 +247,7 @@ export default function StatsPage() {
       speakingTime: { value: formatTime(totalSpeakingMs), change: 0, unit: '' },
       practiceCount: { value: practiceCount, change: 0, unit: '회' },
     };
-  }, [weeklyList, summary]);
+  }, [weeklyList, summary, deltaRecording, deltaSpeaking, deltaPractice, deltaChatTurns]);
 
   const weeklySummary = useMemo(() => {
     // 주간 합계 계산 (weeklyList에서)
@@ -250,24 +263,18 @@ export default function StatsPage() {
       return validItems.reduce((acc, d) => acc + d[field], 0) / validItems.length;
     };
 
-    // summary 우선 사용 (백엔드 어제까지 + 오늘 로컬 합산)
+    // summary 우선 사용 (오늘 포함 7일치 + 세션 중 동기화 안 된 delta만 추가)
     if (summary && Object.keys(summary).length > 0) {
       // summary에 값이 없으면 dailyList에서 계산
       const paceRatioVal = summary.avg_pace_ratio || calcAvgFromDailyList('avgPaceRatio');
       const avgQualityVal = summary.avg_response_quality || calcAvgFromDailyList('avgResponseQuality');
       const speakingRatioVal = summary.avg_net_speaking_density || calcAvgFromDailyList('avgNetSpeakingDensity');
 
-      // 오늘 로컬 데이터
-      const todayRecording = dailyStats?.totalRecordingTime || 0;
-      const todaySpeaking = dailyStats?.totalSpeakingTime || 0;
-      const todayPractice = dailyStats?.practiceCount || 0;
-      const todayChatTurns = dailyStats?.chatTurnsCount || 0;
-
-      // 백엔드(어제까지) + 오늘 로컬 합산
-      const totalRecording = (summary.total_recording_time || 0) + todayRecording;
-      const totalSpeaking = (summary.total_speaking_time || 0) + todaySpeaking;
-      const totalPractice = (summary.total_practice_count || 0) + todayPractice;
-      const totalChatTurns = (summary.total_chat_turns || 0) + todayChatTurns;
+      // summary(오늘 포함) + 세션 중 동기화 안 된 delta만 추가 (중복 방지)
+      const totalRecording = (summary.total_recording_time || 0) + deltaRecording;
+      const totalSpeaking = (summary.total_speaking_time || 0) + deltaSpeaking;
+      const totalPractice = (summary.total_practice_count || 0) + deltaPractice;
+      const totalChatTurns = (summary.total_chat_turns || 0) + deltaChatTurns;
 
       return {
         speakingRatio: Math.round(speakingRatioVal),
@@ -300,7 +307,7 @@ export default function StatsPage() {
       totalSpeakingTime: weeklyTotalSpeaking || dailyStats.totalSpeakingTime || 0,
       chatTurnsCount: weeklyChatTurns || dailyStats.chatTurnsCount || 0,
     };
-  }, [dailyStats, dailyList, weeklyList, summary]);
+  }, [dailyStats, dailyList, weeklyList, summary, deltaRecording, deltaSpeaking, deltaPractice, deltaChatTurns]);
 
   const paceRatioValue = Number(dailyStats?.avgPaceRatio || 0) || 0;
   const densityValue = Number(dailyStats?.avgNetSpeakingDensity || 0) || 0;
@@ -318,91 +325,98 @@ export default function StatsPage() {
   const densityFeedback = getNetSpeakingDensityFeedback(densityPresent ? densityValue : null);
   const qualityFeedback = getResponseQualityFeedback(qualityPresent ? qualityValue : null);
 
-  // 주간 추이 데이터 (백엔드 weekly 우선)
+  // 주간 추이 데이터 (오늘 포함 7일)
   const weeklyTrendData = useMemo(() => {
     const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
-    const withDate = (d) => {
-      const date = d?.date ? new Date(d.date) : null;
-      if (!date || Number.isNaN(date.getTime())) return null;
-      return { ...d, __date: date };
+    const today = new Date();
+
+    // 로컬 타임존 기준 YYYY-MM-DD 포맷 함수
+    const toLocalDateStr = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
     };
 
-    const enriched = weeklyList.map(withDate).filter(Boolean);
-    const sorted = enriched.length > 0 ? enriched.sort((a, b) => a.__date - b.__date) : [];
+    // 오늘 포함 최근 7일 날짜 배열 생성 (6일 전 ~ 오늘)
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (6 - i));
+      return toLocalDateStr(d);
+    });
 
-    // ensure 7 points
-    const base = sorted.slice(-7);
-    if (base.length === 0) {
-      const today = new Date();
-      return Array.from({ length: 7 }, (_, i) => {
-        const dayIndex = (today.getDay() - 6 + i + 7) % 7;
-        return { name: dayNames[dayIndex], speakingSec: 0, listening: 0, practice: 0, chatTurns: 0 };
-      });
-    }
+    // weeklyList를 날짜별 맵으로 변환
+    const dataByDate = {};
+    weeklyList.forEach((d) => {
+      if (d?.date) {
+        dataByDate[d.date] = d;
+      }
+    });
 
-    return base.map((d) => {
-      const dayIndex = d.__date.getDay();
+    // 7일 데이터 생성 (없는 날짜는 0으로 채움)
+    return last7Days.map((dateStr, idx) => {
+      const d = dataByDate[dateStr];
+      // 로컬 기준 요일 계산
+      const dateObj = new Date(today);
+      dateObj.setDate(dateObj.getDate() - (6 - idx));
+      const dayIndex = dateObj.getDay();
+
       return {
         name: dayNames[dayIndex],
-        // seconds 단위로 보존해서 분/초 표기 가능
-        speakingSec: Math.max(0, Math.round((d.totalSpeakingTime || 0) / 1000)),
+        speakingSec: Math.max(0, Math.round((d?.totalSpeakingTime || 0) / 1000)),
         listening: 0,
-        practice: d.practiceCount || 0,
-        chatTurns: d.chatTurnsCount || 0,
+        practice: d?.practiceCount || 0,
+        chatTurns: d?.chatTurnsCount || 0,
       };
     });
   }, [weeklyList]);
 
-  // 활동 분포 데이터 (주간 합계 기준)
+  // 활동 분포 데이터 (최근 7일 기준)
   const activityDistributionData = useMemo(() => {
-    // 주간 데이터에서 합산
-    const weeklyPracticeMs = weeklyList.reduce(
-      (acc, d) => acc + Math.max(0, Number(d?.practiceSpeakingTime || 0)),
-      0
-    );
-    const weeklyChatMs = weeklyList.reduce(
-      (acc, d) => acc + Math.max(0, Number(d?.chatSpeakingTime || 0)),
-      0
-    );
-
-    // 주간 합계가 없으면 오늘 데이터 사용
-    let practiceMs = weeklyPracticeMs;
-    let chatMs = weeklyChatMs;
-
-    if (practiceMs + chatMs <= 0) {
-      practiceMs = Math.max(0, Number(dailyStats?.practiceSpeakingTime || 0));
-      chatMs = Math.max(0, Number(dailyStats?.chatSpeakingTime || 0));
-    }
-
-    // 여전히 없으면 practiceCount/chatTurnsCount로 대체 추정
-    if (practiceMs + chatMs <= 0) {
-      const totalPractice = weeklyList.reduce((acc, d) => acc + (d?.practiceCount || 0), 0) || (dailyStats?.practiceCount || 0);
-      const totalChat = weeklyList.reduce((acc, d) => acc + (d?.chatTurnsCount || 0), 0) || (dailyStats?.chatTurnsCount || 0);
-      const totalCount = totalPractice + totalChat;
-
-      if (totalCount > 0) {
-        const practicePercent = Math.round((totalPractice / totalCount) * 100);
-        const chatPercent = Math.max(0, 100 - practicePercent);
-        return [
-          { name: '문장 연습', value: practicePercent, color: '#6366f1' },
-          { name: 'AI 대화', value: chatPercent, color: '#22c55e' },
-        ];
-      }
-
+    // 주간 summary(오늘 포함 7일) 기준 분포
+    const summaryPractice = Number(summary?.total_practice_count || 0) + (deltaPractice || 0);
+    const summaryChatTurns = Number(summary?.total_chat_turns || 0) + (deltaChatTurns || 0);
+    const summaryTotal = summaryPractice + summaryChatTurns;
+    if (summaryTotal > 0) {
+      const practicePercent = Math.round((summaryPractice / summaryTotal) * 100);
+      const chatPercent = Math.max(0, 100 - practicePercent);
       return [
-        { name: '데이터 없음', value: 1, color: '#e5e7eb' },
+        { name: '문장 연습', value: practicePercent, color: '#6366f1' },
+        { name: 'AI 대화', value: chatPercent, color: '#22c55e' },
       ];
     }
 
-    const total = practiceMs + chatMs;
-    const practicePercent = Math.round((practiceMs / total) * 100);
-    const chatPercent = Math.max(0, 100 - practicePercent);
+    // fallback: weeklyList에서 합산
+    const weeklyPracticeCount = weeklyList.reduce((acc, d) => acc + (d?.practiceCount || 0), 0);
+    const weeklyChatTurns = weeklyList.reduce((acc, d) => acc + (d?.chatTurnsCount || 0), 0);
+    const totalCount = weeklyPracticeCount + weeklyChatTurns;
+
+    if (totalCount > 0) {
+      const practicePercent = Math.round((weeklyPracticeCount / totalCount) * 100);
+      const chatPercent = Math.max(0, 100 - practicePercent);
+      return [
+        { name: '문장 연습', value: practicePercent, color: '#6366f1' },
+        { name: 'AI 대화', value: chatPercent, color: '#22c55e' },
+      ];
+    }
+
+    // 3) 주간 데이터가 비어있으면 오늘치로 폴백
+    const todayPractice = Number(dailyStats?.practiceCount || 0) || 0;
+    const todayChat = Number(dailyStats?.chatTurnsCount || 0) || 0;
+    const todayTotal = todayPractice + todayChat;
+    if (todayTotal > 0) {
+      const practicePercent = Math.round((todayPractice / todayTotal) * 100);
+      const chatPercent = Math.max(0, 100 - practicePercent);
+      return [
+        { name: '문장 연습', value: practicePercent, color: '#6366f1' },
+        { name: 'AI 대화', value: chatPercent, color: '#22c55e' },
+      ];
+    }
 
     return [
-      { name: '문장 연습', value: practicePercent, color: '#6366f1' },
-      { name: 'AI 대화', value: chatPercent, color: '#22c55e' },
+      { name: '데이터 없음', value: 1, color: '#e5e7eb' },
     ];
-  }, [weeklyList, dailyStats]);
+  }, [weeklyList, dailyStats, summary, deltaPractice, deltaChatTurns]);
 
   // 최근 AI 대화 조회
   useEffect(() => {
