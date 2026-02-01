@@ -1,2 +1,1 @@
-# Project02-frontend!!
-# Test!!
+# Project02-frontend
